@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 class DiskModel(models.Model):
     make = models.CharField(max_length=255)
     model = models.CharField(max_length=255)
-    capacity = models.BigIntegerField(help_text="Capacity in bytes")
+    capacity = models.BigIntegerField(help_text="Capacity in Terabytes")
 
     def __str__(self):
         return f"{self.make} {self.model} ({self.capacity} B)"
