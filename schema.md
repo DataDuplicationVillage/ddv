@@ -10,7 +10,7 @@
 * ID
 * Make
 * Model
-* Capacity INTEGER -- in bytes
+* Capacity INTEGER -- in Terabytes
 
 ## DiskHaver
 * ID
