@@ -10,14 +10,8 @@ class DiskModel(models.Model):
         return f"{self.make} {self.model} ({self.capacity} B)"
 
 class DiskHaver(models.Model):
-    PERMISSION_CHOICES = [
-        ('ADMIN', 'Admin'),
-        ('VOLUNTEER', 'Volunteer'),
-        ('USER', 'User'),
-    ]
     user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True)
     name = models.CharField(max_length=255)
-    permission = models.CharField(max_length=20, choices=PERMISSION_CHOICES, default='USER')
 
     def __str__(self):
         return self.name
