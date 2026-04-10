@@ -64,11 +64,25 @@ class DiskAdmin(ModelAdmin):
                 disk_id = f"DDV-{uuid.uuid4()}"
 
                 # Create disk row
-                Disk.objects.create(
+                disk = Disk.objects.create(
                     id=disk_id,
                     disk_model=form.cleaned_data['disk_model'],
                     serial_number=form.cleaned_data['serial_number'],
                     firmware_version=form.cleaned_data['firmware_version']
+                )
+
+                mode = form.cleaned_data['mode']
+                if mode == 'new':
+                    haver = DiskHaver.objects.create(
+                        name=f"Haver-{uuid.uuid4().hex[:8]}"
+                    )
+                else:
+                    haver = form.cleaned_data['found_diskhaver']
+                    
+                DiskHavings.objects.create(
+                    disk=disk,
+                    disk_haver=haver,
+                    havings_type=form.cleaned_data['havings_type']
                 )
 
                 # Generate QR code

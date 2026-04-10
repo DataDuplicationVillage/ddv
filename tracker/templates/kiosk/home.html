@@ -1,0 +1,111 @@
+{% extends 'kiosk/base.html' %}
+
+{% block extra_head %}
+<style>
+    .scanner-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2rem;
+    }
+
+    .scanner-icon {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: rgba(0, 210, 255, 0.05);
+        border: 2px solid var(--primary-color);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: pulse-glow 3s infinite;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .scanner-icon::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        height: 2px;
+        background: var(--primary-color);
+        animation: scanline 2s linear infinite;
+        box-shadow: 0 0 10px var(--primary-color);
+    }
+
+    @keyframes scanline {
+        0% { top: 10%; opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { top: 90%; opacity: 0; }
+    }
+
+    .hidden-input {
+        position: absolute;
+        opacity: 0;
+        top: -100px;
+        left: -100px;
+    }
+    
+    .floating {
+        animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="glass-card floating">
+    <h1 class="title">DDV Kiosk</h1>
+    <p class="subtitle">Please scan a disk to view the associated records.</p>
+    
+    <div class="scanner-container">
+        <div class="scanner-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2"></path>
+                <path d="M17 3h2a2 2 0 0 1 2 2v2"></path>
+                <path d="M21 17v2a2 2 0 0 1-2 2h-2"></path>
+                <path d="M7 21H5a2 2 0 0 1-2-2v-2"></path>
+                <rect x="7" y="7" width="10" height="10" rx="1"></rect>
+            </svg>
+        </div>
+        
+        <form method="POST" id="scan-form">
+            {% csrf_token %}
+            <input type="text" name="disk_id" id="disk-id-input" class="hidden-input" autocomplete="off" autofocus>
+        </form>
+        
+        <p style="color: var(--text-secondary); text-transform: uppercase; font-size: 0.85rem; letter-spacing: 0.1em; font-weight: 600;">
+            Awaiting Scanner Input...
+        </p>
+    </div>
+</div>
+
+<script>
+    // Keep focus constantly on the hidden input to ensure scanner keyboard emulation is caught
+    const inputField = document.getElementById('disk-id-input');
+    
+    function ensureFocus() {
+        if (document.activeElement !== inputField) {
+            inputField.focus();
+        }
+    }
+    
+    document.addEventListener('click', ensureFocus);
+    window.addEventListener('blur', () => { setTimeout(ensureFocus, 10); });
+    
+    ensureFocus();
+    
+    inputField.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (this.value.trim() !== '') {
+                document.getElementById('scan-form').submit();
+            }
+        }
+    });
+</script>
+{% endblock %}
