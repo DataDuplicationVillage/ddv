@@ -34,7 +34,7 @@
                 
                 <div class="space-y-4">
                     {% for field in form %}
-                    <div>
+                    <div id="container-{{ field.name }}" class="field-container">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="{{ field.id_for_label }}">
                             {{ field.label }}
                         </label>
@@ -57,4 +57,27 @@
         </div>
     </div>
 </div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const modeRadios = document.querySelectorAll('input[name="mode"]');
+        const existingContainer = document.getElementById('container-existing_disk_id');
+        
+        const toggleFields = () => {
+            const selectedMode = document.querySelector('input[name="mode"]:checked');
+            if (!selectedMode) return;
+            
+            if (selectedMode.value === 'new') {
+                if(existingContainer) existingContainer.style.display = 'none';
+            } else {
+                if(existingContainer) existingContainer.style.display = 'block';
+            }
+        };
+        
+        if (modeRadios.length > 0) {
+            modeRadios.forEach(radio => radio.addEventListener('change', toggleFields));
+            toggleFields();
+        }
+    });
+</script>
 {% endblock %}
