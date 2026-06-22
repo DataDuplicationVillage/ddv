@@ -12,3 +12,4 @@ This is a CRUD app to keep track of disks for the Defcon Data Duplication Villag
 * Volunteer users can add and modify disks, datasource, diskhavers, and diskhavings entries.
 * Regular users can read the diskhavings entries corresponding to their diskhaver ID.
 * The Diskhavings table is pushed as a read-only replica to a minimal web frontend. Because the kiosk only needs to look up entries by Disk ID, no other tables are replicated. All other tables are stored on a master host with the full web interface.
+* The environment should have four portals; Admin, Volunteer Ops (for intake and return), Processing (to move drives between the various states), and a Status Kiosk that doesn't require authentication - just the Disk Bar Code to provide anyone with the current status of the drive.
