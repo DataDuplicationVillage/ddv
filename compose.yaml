@@ -1,0 +1,32 @@
+services:
+  django:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_SECRET_KEY: "django-insecure-ddv-docker-dev"
+      DJANGO_ALLOWED_HOSTS: "*"
+      DDV_DATABASE_DIR: /app/data
+    volumes:
+      - django-data:/app/data
+
+  drive-tracker:
+    build:
+      context: ./ddv-drive-tracker
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DDV_TRACKER_DB_FILE: /app/data/db.json
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      APP_URL: http://localhost:3000
+    volumes:
+      - drive-tracker-data:/app/data
+
+volumes:
+  django-data:
+  drive-tracker-data:

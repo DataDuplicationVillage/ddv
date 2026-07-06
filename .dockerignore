@@ -1,0 +1,17 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+compose.yaml
+ddv-drive-tracker/
+implementation-plan.md
+project-architecture.md
+*.sqlite3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+staticfiles/

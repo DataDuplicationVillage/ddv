@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+coverage/
+.git/
+.env*
+!.env.example
+*.log
+*.pdf:Zone.Identifier
+*:Zone.Identifier
+.DS_Store

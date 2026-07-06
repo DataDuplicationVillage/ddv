@@ -1,10 +1,24 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-ddv-mvp'
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+def env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {'1', 'true', 'yes', 'on'}
+
+def env_list(name, default):
+    value = os.environ.get(name)
+    if not value:
+        return default
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-ddv-mvp')
+DEBUG = env_bool('DJANGO_DEBUG', True)
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', ['*'])
+DATABASE_DIR = Path(os.environ.get('DDV_DATABASE_DIR', BASE_DIR))
 
 INSTALLED_APPS = [
     'unfold',
@@ -51,11 +65,11 @@ WSGI_APPLICATION = 'ddv_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': DATABASE_DIR / 'db.sqlite3',
     },
     'replica': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'replica.sqlite3',
+        'NAME': DATABASE_DIR / 'replica.sqlite3',
     }
 }
 
