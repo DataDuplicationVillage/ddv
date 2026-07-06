@@ -1,0 +1,1116 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  AreaChart, Area
+} from 'recharts';
+import { 
+  Database, Plus, Trash2, Edit3, HelpCircle, RefreshCw, Barcode, HardDrive, 
+  Layers, ShieldAlert, FileText, Check, Loader2, Info, ArrowUpRight, TrendingUp,
+  Activity, Users
+} from 'lucide-react';
+import { Disk, DataSource, UserRole } from '../types';
+
+interface AdminPortalProps {
+  currentUser: { username: string; name: string; role: UserRole; diskhaver_id?: string } | null;
+  onLogout: () => void;
+  onTableUpdateNotification: (tableName: string, action: string, recordId: string) => void;
+}
+
+export default function AdminPortal({
+  currentUser,
+  onLogout,
+  onTableUpdateNotification
+}: AdminPortalProps) {
+  // Database states
+  const [disks, setDisks] = useState<Disk[]>([]);
+  const [datasources, setDatasources] = useState<DataSource[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Active admin tab: 'disks' | 'datasources' | 'reports'
+  const [activeTab, setActiveTab] = useState<'disks' | 'datasources' | 'reports'>('disks');
+
+  // Search & Filter States
+  const [diskSearchQuery, setDiskSearchQuery] = useState('');
+  const [diskStatusFilter, setDiskStatusFilter] = useState<string>('all');
+  const [diskPage, setDiskPage] = useState(1);
+  const diskPageSize = 12;
+
+  // Seeding States
+  const [isLoadTesting, setIsLoadTesting] = useState(false);
+  const [loadTestMsg, setLoadTestMsg] = useState('');
+  const [selectedSeedCount, setSelectedSeedCount] = useState<10 | 100 | 500>(100);
+
+  // Add/Edit Modal states
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Disk Form State
+  const [diskForm, setDiskForm] = useState({
+    id: '',
+    hd_manufacturer: 'Seagate',
+    hd_model: '',
+    hd_serial: '',
+    hd_size: '8TB',
+    hd_speed: '7200 RPM',
+    source_requested_id: '',
+    status: 'received' as Disk['status'],
+    received_time: '',
+    copy_start_time: '',
+    copy_complete_time: '',
+    copy_fail_time: '',
+    pickup_time: '',
+  });
+
+  // DataSource Form State
+  const [sourceForm, setSourceForm] = useState({
+    name: '',
+    description: '',
+    interface: 'SATA 3',
+    size_options: '8TB, 6TB'
+  });
+
+  // Fetch all tables
+  const fetchAllData = async () => {
+    setIsLoading(true);
+    try {
+      const [disksRes, sourcesRes] = await Promise.all([
+        fetch('/api/disks'),
+        fetch('/api/datasources')
+      ]);
+
+      if (disksRes.ok) setDisks(await disksRes.json());
+      if (sourcesRes.ok) setDatasources(await sourcesRes.json());
+    } catch (err) {
+      console.error('Failed to query tables:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllData();
+  }, []);
+
+  // Generate sequence-based disk ID
+  const generateDiskID = (existingDisks: Disk[]) => {
+    const lastSeqNum = existingDisks.reduce((max, d) => {
+      const match = d.id.match(/(?:disk|DISK)-0*(\d+)/i);
+      if (match) {
+        const val = parseInt(match[1], 10);
+        return val > max ? val : max;
+      }
+      return max;
+    }, 0);
+    const nextSeq = lastSeqNum + 1;
+    const seqStr = nextSeq.toString().padStart(3, '0');
+    
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let uuid = '';
+    for (let i = 0; i < 16; i++) {
+      uuid += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return `disk-${seqStr}-${uuid}`;
+  };
+
+  // Populate dynamic ID once disks load
+  useEffect(() => {
+    if (disks.length > 0 && !diskForm.id) {
+      setDiskForm(prev => ({
+        ...prev,
+        id: generateDiskID(disks)
+      }));
+    }
+  }, [disks, diskForm.id]);
+
+  // Seeding Handlers
+  const handleGenerateLoadTestData = async () => {
+    setIsLoadTesting(true);
+    setLoadTestMsg(`Seeding database with ${selectedSeedCount} load-test drives...`);
+    try {
+      const res = await fetch('/api/admin/generate-mock-load-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: selectedSeedCount })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLoadTestMsg(`Success: ${data.message}`);
+        fetchAllData();
+        setDiskPage(1);
+      } else {
+        setLoadTestMsg(`Error: ${data.error || 'Failed to seed load test.'}`);
+      }
+    } catch (e: any) {
+      setLoadTestMsg(`Error: ${e.message}`);
+    } finally {
+      setIsLoadTesting(false);
+    }
+  };
+
+  const handlePurgeLoadTestData = async () => {
+    if (!window.confirm("Are you absolutely sure you want to purge all load-test mock data?")) {
+      return;
+    }
+    setIsLoadTesting(true);
+    setLoadTestMsg('Purging mock load-test drives from database...');
+    try {
+      const res = await fetch('/api/admin/purge-mock-load-test', {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLoadTestMsg(`Success: ${data.message}`);
+        fetchAllData();
+        setDiskPage(1);
+      } else {
+        setLoadTestMsg(`Error: ${data.error || 'Failed to purge load test.'}`);
+      }
+    } catch (e: any) {
+      setLoadTestMsg(`Error: ${e.message}`);
+    } finally {
+      setIsLoadTesting(false);
+    }
+  };
+
+  // Delete handlers
+  const handleDelete = async (tableName: string, recordId: string) => {
+    if (!window.confirm(`Are you absolutely sure you want to delete this record from table \`${tableName}\`?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/${tableName}/${recordId}`, { method: 'DELETE' });
+      if (res.ok) {
+        onTableUpdateNotification(tableName, 'DELETE', recordId);
+        fetchAllData();
+      } else {
+        alert('Deletion rejected by server constraints.');
+      }
+    } catch (err) {
+      alert('Network communication failure.');
+    }
+  };
+
+  // Inline Status updates
+  const handleInlineStatusChange = async (diskId: string, newStatus: Disk['status']) => {
+    try {
+      const disk = disks.find(d => d.id === diskId);
+      if (!disk) return;
+
+      const payload = {
+        status: newStatus,
+        copy_start_time: newStatus === 'copying' && !disk.copy_start_time ? new Date().toISOString() : disk.copy_start_time,
+        copy_complete_time: newStatus === 'completed' && !disk.copy_complete_time ? new Date().toISOString() : disk.copy_complete_time,
+        copy_fail_time: newStatus === 'failed' && !disk.copy_fail_time ? new Date().toISOString() : disk.copy_fail_time,
+        pickup_time: newStatus === 'picked_up' && !disk.pickup_time ? new Date().toISOString() : disk.pickup_time,
+      };
+
+      const res = await fetch(`/api/disks/${diskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        onTableUpdateNotification('disks', 'UPDATE', diskId);
+        fetchAllData();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'Failed to update disk status');
+      }
+    } catch (err) {
+      console.error('Network error updating status:', err);
+    }
+  };
+
+  // Form submission: Disk
+  const handleDiskSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const isEdit = !!editingId;
+    const url = isEdit ? `/api/disks/${editingId}` : '/api/disks';
+    const method = isEdit ? 'PUT' : 'POST';
+
+    const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
+    if (!isEdit && selectedSource) {
+      const sizeOptions = selectedSource.required_specs.size_options;
+      if (!sizeOptions.includes(diskForm.hd_size)) {
+        alert(`Invalid Specs! DataSource "${selectedSource.name}" requires ${sizeOptions.join('/')} drives. Selected size is ${diskForm.hd_size}.`);
+        return;
+      }
+    }
+
+    try {
+      const payload = {
+        ...diskForm,
+        received_time: diskForm.received_time || new Date().toISOString(),
+        copy_start_time: diskForm.status === 'copying' && !diskForm.copy_start_time ? new Date().toISOString() : (diskForm.copy_start_time || null),
+        copy_complete_time: diskForm.status === 'completed' && !diskForm.copy_complete_time ? new Date().toISOString() : (diskForm.copy_complete_time || null),
+        copy_fail_time: diskForm.status === 'failed' && !diskForm.copy_fail_time ? new Date().toISOString() : (diskForm.copy_fail_time || null),
+        pickup_time: diskForm.status === 'picked_up' && !diskForm.pickup_time ? new Date().toISOString() : (diskForm.pickup_time || null)
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        onTableUpdateNotification('disks', isEdit ? 'UPDATE' : 'INSERT', result.id);
+        setShowAddModal(false);
+        setEditingId(null);
+        fetchAllData();
+      } else {
+        const errData = await res.json();
+        alert(errData.error || 'Server rejected request');
+      }
+    } catch (err) {
+      alert('Error saving disk entry.');
+    }
+  };
+
+  // Form submission: DataSource
+  const handleSourceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const isEdit = !!editingId;
+    const url = isEdit ? `/api/datasources/${editingId}` : '/api/datasources';
+    const method = isEdit ? 'PUT' : 'POST';
+
+    try {
+      const payload = {
+        name: sourceForm.name,
+        description: sourceForm.description,
+        required_specs: {
+          interface: sourceForm.interface,
+          size_options: sourceForm.size_options.split(',').map(s => s.trim())
+        }
+      };
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        onTableUpdateNotification('datasources', isEdit ? 'UPDATE' : 'INSERT', result.id);
+        setShowAddModal(false);
+        setEditingId(null);
+        fetchAllData();
+      } else {
+        alert('Server rejected request');
+      }
+    } catch (err) {
+      alert('Error saving source entry.');
+    }
+  };
+
+  // Open Edit Dialog
+  const openEdit = (tabName: typeof activeTab, record: any) => {
+    setEditingId(record.id);
+    if (tabName === 'disks') {
+      const r = record as Disk;
+      setDiskForm({
+        id: r.id,
+        hd_manufacturer: r.hd_manufacturer,
+        hd_model: r.hd_model,
+        hd_serial: r.hd_serial,
+        hd_size: r.hd_size,
+        hd_speed: r.hd_speed,
+        source_requested_id: r.source_requested_id,
+        status: r.status,
+        received_time: r.received_time,
+        copy_start_time: r.copy_start_time || '',
+        copy_complete_time: r.copy_complete_time || '',
+        copy_fail_time: r.copy_fail_time || '',
+        pickup_time: r.pickup_time || '',
+      });
+    } else if (tabName === 'datasources') {
+      const r = record as DataSource;
+      setSourceForm({
+        name: r.name,
+        description: r.description,
+        interface: r.required_specs.interface,
+        size_options: r.required_specs.size_options.join(', ')
+      });
+    }
+    setShowAddModal(true);
+  };
+
+  // Open Add Dialog
+  const openNewAdd = (tabName: typeof activeTab) => {
+    setEditingId(null);
+    if (tabName === 'disks') {
+      setDiskForm({
+        id: generateDiskID(disks),
+        hd_manufacturer: 'Seagate',
+        hd_model: 'IronWolf ST8000VN004',
+        hd_serial: `SN-${Math.random().toString(36).substr(2, 8).toUpperCase()}`,
+        hd_size: '8TB',
+        hd_speed: '7200 RPM',
+        source_requested_id: datasources[0]?.id || 'DS-A',
+        status: 'received',
+        received_time: new Date().toISOString(),
+        copy_start_time: '',
+        copy_complete_time: '',
+        copy_fail_time: '',
+        pickup_time: '',
+      });
+    } else if (tabName === 'datasources') {
+      setSourceForm({ name: '', description: '', interface: 'SATA 3', size_options: '8TB, 6TB' });
+    }
+    setShowAddModal(true);
+  };
+
+  // Filter disks
+  const filteredDisks = disks.filter(d => {
+    const matchesSearch = 
+      d.id.toLowerCase().includes(diskSearchQuery.toLowerCase()) ||
+      d.hd_serial.toLowerCase().includes(diskSearchQuery.toLowerCase()) ||
+      d.hd_manufacturer.toLowerCase().includes(diskSearchQuery.toLowerCase()) ||
+      d.hd_model.toLowerCase().includes(diskSearchQuery.toLowerCase()) ||
+      (d.hd_size && d.hd_size.toLowerCase().includes(diskSearchQuery.toLowerCase()));
+    
+    const matchesStatus = diskStatusFilter === 'all' || d.status === diskStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  // Pagination for Disks
+  const totalPages = Math.max(1, Math.ceil(filteredDisks.length / diskPageSize));
+  const currentPage = Math.min(diskPage, totalPages);
+  const startIndex = (currentPage - 1) * diskPageSize;
+  const pagedDisks = filteredDisks.slice(startIndex, startIndex + diskPageSize);
+
+  // Generate Reports Analytics
+  const getReportsData = () => {
+    const dateMap: Record<string, { accepted: number; copying: number; completed: number; returned: number; failed: number }> = {};
+    
+    disks.forEach(disk => {
+      const formatDate = (isoStr: string | null | undefined) => {
+        if (!isoStr) return null;
+        try {
+          const d = new Date(isoStr);
+          if (isNaN(d.getTime())) return null;
+          return d.toISOString().split('T')[0]; // "YYYY-MM-DD"
+        } catch {
+          return null;
+        }
+      };
+
+      const rDate = formatDate(disk.received_time);
+      const sDate = formatDate(disk.copy_start_time);
+      const cDate = formatDate(disk.copy_complete_time);
+      const fDate = formatDate(disk.copy_fail_time);
+      const pDate = formatDate(disk.pickup_time);
+
+      const touchDate = (dStr: string) => {
+        if (!dateMap[dStr]) {
+          dateMap[dStr] = { accepted: 0, copying: 0, completed: 0, returned: 0, failed: 0 };
+        }
+      };
+
+      if (rDate) { touchDate(rDate); dateMap[rDate].accepted += 1; }
+      if (sDate) { touchDate(sDate); dateMap[sDate].copying += 1; }
+      if (cDate) { touchDate(cDate); dateMap[cDate].completed += 1; }
+      if (fDate) { touchDate(fDate); dateMap[fDate].failed += 1; }
+      if (pDate) { touchDate(pDate); dateMap[pDate].returned += 1; }
+    });
+
+    const sortedDates = Object.keys(dateMap).sort();
+    if (sortedDates.length === 0) return [];
+
+    let cumulativeAccepted = 0;
+    let cumulativeCopying = 0;
+    let cumulativeCompleted = 0;
+    let cumulativeReturned = 0;
+    let cumulativeFailed = 0;
+
+    return sortedDates.map(date => {
+      const dayData = dateMap[date];
+      cumulativeAccepted += dayData.accepted;
+      cumulativeCopying += dayData.copying;
+      cumulativeCompleted += dayData.completed;
+      cumulativeReturned += dayData.returned;
+      cumulativeFailed += dayData.failed;
+
+      let displayLabel = date;
+      try {
+        const parsed = new Date(date + 'T00:00:00');
+        displayLabel = parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      } catch {}
+
+      return {
+        date,
+        label: displayLabel,
+        "Accepted Drives": cumulativeAccepted,
+        "In Progress (Copying)": cumulativeCopying,
+        "Completed Duplications": cumulativeCompleted,
+        "Returned to Clients": cumulativeReturned,
+        "Failed Attempts": cumulativeFailed
+      };
+    });
+  };
+
+  const reportsData = getReportsData();
+
+  // Status Distribution Chart Data
+  const getStatusDistribution = () => {
+    const counts = { received: 0, copying: 0, completed: 0, failed: 0, picked_up: 0 };
+    disks.forEach(d => {
+      if (d.status in counts) {
+        counts[d.status as keyof typeof counts] += 1;
+      }
+    });
+    return [
+      { name: 'Accepted', count: counts.received, fill: '#60A5FA' },
+      { name: 'Copying', count: counts.copying, fill: '#3B82F6' },
+      { name: 'Completed', count: counts.completed, fill: '#10B981' },
+      { name: 'Failed', count: counts.failed, fill: '#EF4444' },
+      { name: 'Returned', count: counts.picked_up, fill: '#8B5CF6' }
+    ];
+  };
+
+  const statusDistribution = getStatusDistribution();
+
+  return (
+    <div className="space-y-6">
+      {/* Top Banner & Tab Switcher */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-3 border-b border-[#2A2A2E] gap-4 mb-6">
+        <div>
+          <h3 className="text-xs font-bold font-mono text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+            <span>ADMINISTRATIVE WORKSPACE LEDGER</span>
+          </h3>
+        </div>
+        
+        {/* Navigation Tab Switcher */}
+        <div className="flex bg-[#0E0E10] border border-[#2A2A2E] p-0.5 rounded-lg self-stretch sm:self-auto shrink-0 shadow-inner">
+          <button
+            onClick={() => setActiveTab('disks')}
+            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+              activeTab === 'disks' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <HardDrive className="h-3.5 w-3.5" />
+            <span>Storage Drives</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('datasources')}
+            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+              activeTab === 'datasources' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <Layers className="h-3.5 w-3.5" />
+            <span>Data Sources</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('reports')}
+            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+              activeTab === 'reports' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <Activity className="h-3.5 w-3.5" />
+            <span>Performance Reports</span>
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'disks' && (
+        <div className="space-y-6">
+          {/* Controls Panel */}
+          <div className="bg-[#111113] border border-[#2A2A2E] p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row gap-2 flex-1 max-w-xl">
+              <input
+                type="text"
+                placeholder="Search drive sequence, capacity, brand, serial keys..."
+                value={diskSearchQuery}
+                onChange={(e) => { setDiskSearchQuery(e.target.value); setDiskPage(1); }}
+                className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 flex-1 min-w-[200px]"
+              />
+              <select
+                value={diskStatusFilter}
+                onChange={(e) => { setDiskStatusFilter(e.target.value); setDiskPage(1); }}
+                className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-2.5 py-2 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 shrink-0"
+              >
+                <option value="all">All Statuses</option>
+                <option value="received">Accepted (received)</option>
+                <option value="copying">Copying (copying)</option>
+                <option value="completed">Completed (completed)</option>
+                <option value="failed">Failed (failed)</option>
+                <option value="picked_up">Returned (picked_up)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Load Testing Seeding Selector */}
+              <div className="flex items-center bg-[#0E0E10] border border-[#2A2A2E] rounded-lg p-1 text-xs">
+                <span className="text-[10px] font-mono text-slate-500 px-2 uppercase font-black">Seed Count</span>
+                <select
+                  value={selectedSeedCount}
+                  onChange={(e) => setSelectedSeedCount(Number(e.target.value) as any)}
+                  className="bg-slate-900 border border-[#2A2A2E] text-white text-xs rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                >
+                  <option value={10}>10</option>
+                  <option value={100}>100</option>
+                  <option value={500}>500</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleGenerateLoadTestData}
+                  disabled={isLoadTesting}
+                  className="ml-2 px-3 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white font-extrabold rounded text-[10px] uppercase transition cursor-pointer"
+                >
+                  Seed Drives
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handlePurgeLoadTestData}
+                disabled={isLoadTesting}
+                className="px-3 py-2 border border-rose-900/30 bg-rose-950/15 text-rose-400 font-bold hover:bg-rose-950/30 text-xs rounded-lg transition cursor-pointer"
+              >
+                Purge Seeding
+              </button>
+
+              <button
+                type="button"
+                onClick={() => openNewAdd('disks')}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-md"
+              >
+                <Plus className="h-4 w-4" />
+                Add Drive Record
+              </button>
+            </div>
+          </div>
+
+          {loadTestMsg && (
+            <div className="p-3 bg-slate-900/45 border border-[#2A2A2E] text-slate-300 font-mono text-xs rounded-lg flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                {loadTestMsg}
+              </span>
+              <button onClick={() => setLoadTestMsg('')} className="text-[10px] text-slate-500 hover:text-white uppercase font-black">Dismiss</button>
+            </div>
+          )}
+
+          {/* Storage Drives List */}
+          {pagedDisks.length > 0 ? (
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl overflow-hidden shadow-lg">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-xs text-slate-300">
+                  <thead className="bg-[#0E0E10] border-b border-[#2A2A2E] text-[10px] font-mono uppercase font-black tracking-wider text-slate-400">
+                    <tr>
+                      <th className="py-3 px-4">Drive ID / Serial</th>
+                      <th className="py-3 px-4">Hardware Info</th>
+                      <th className="py-3 px-4">Specs</th>
+                      <th className="py-3 px-4">Allocated Dataset</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#2A2A2E]/50">
+                    {pagedDisks.map(d => {
+                      const matchedSource = datasources.find(s => s.id === d.source_requested_id);
+                      return (
+                        <tr key={d.id} className="hover:bg-[#1D1D22]/40 transition-colors">
+                          <td className="py-3.5 px-4">
+                            <div className="font-mono font-bold text-slate-200">{d.id}</div>
+                            <div className="font-mono text-[10px] text-slate-500 mt-0.5">S/N: {d.hd_serial}</div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-bold text-white">{d.hd_manufacturer}</div>
+                            <div className="text-slate-400 text-[11px] truncate max-w-[200px]" title={d.hd_model}>
+                              {d.hd_model}
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-300 px-1.5 py-0.5 rounded font-bold">
+                                {d.hd_size}
+                              </span>
+                              <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-400 px-1.5 py-0.5 rounded">
+                                {d.hd_speed}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            {matchedSource ? (
+                              <div>
+                                <div className="font-medium text-slate-300">{matchedSource.name}</div>
+                                <div className="font-mono text-[9px] text-emerald-450">{matchedSource.id}</div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-500 font-mono text-[10px]">—</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <select
+                              value={d.status}
+                              onChange={(e) => handleInlineStatusChange(d.id, e.target.value as any)}
+                              className={`text-[9px] px-2.5 py-1 rounded uppercase font-black font-mono border cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                                d.status === 'completed' ? 'bg-emerald-950/45 text-emerald-400 border-emerald-900/30' :
+                                d.status === 'copying' ? 'bg-blue-950/40 text-blue-400 border-blue-900/30' :
+                                d.status === 'failed' ? 'bg-rose-950/30 text-rose-400 border-rose-900/30' :
+                                d.status === 'picked_up' ? 'bg-purple-950/30 text-purple-400 border-purple-900/30' :
+                                'bg-slate-900 text-slate-300 border-slate-700'
+                              }`}
+                            >
+                              <option value="received">Accepted</option>
+                              <option value="copying">Copying</option>
+                              <option value="completed">Completed</option>
+                              <option value="failed">Failed</option>
+                              <option value="picked_up">Returned</option>
+                            </select>
+                          </td>
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => openEdit('disks', d)}
+                                className="text-emerald-450 hover:text-emerald-400 p-1.5 hover:bg-emerald-950/20 rounded transition"
+                                title="Edit Drive Entry"
+                              >
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete('disks', d.id)}
+                                className="text-rose-400 hover:text-rose-300 p-1.5 hover:bg-rose-950/20 rounded transition"
+                                title="Delete Record"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-12 bg-[#16161A] border border-[#2A2A2E] rounded-xl text-slate-500 font-mono text-sm">
+              No matching storage drive records found in the database.
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-4 mt-6">
+              <button
+                disabled={currentPage === 1}
+                onClick={() => setDiskPage(currentPage - 1)}
+                className="px-3.5 py-1.5 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-xs rounded-lg transition text-slate-300 font-bold"
+              >
+                Previous
+              </button>
+              <span className="text-xs text-slate-400 font-mono font-bold">
+                Page {currentPage} of {totalPages} ({filteredDisks.length} total)
+              </span>
+              <button
+                disabled={currentPage === totalPages}
+                onClick={() => setDiskPage(currentPage + 1)}
+                className="px-3.5 py-1.5 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-xs rounded-lg transition text-slate-300 font-bold"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'datasources' && (
+        <div className="space-y-6">
+          <div className="bg-[#111113] border border-[#2A2A2E] p-4 rounded-xl flex items-center justify-between">
+            <span className="text-xs text-slate-400 font-mono font-extrabold uppercase tracking-wider">Active Available Source Datasets</span>
+            <button
+              type="button"
+              onClick={() => openNewAdd('datasources')}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <Plus className="h-4 w-4" />
+              Add Source Dataset
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {datasources.map(s => (
+              <div key={s.id} className="bg-[#16161A] border border-[#2A2A2E] hover:border-slate-700 rounded-xl p-5 space-y-4 transition-all">
+                <div className="flex justify-between items-start border-b border-[#2A2A2E] pb-2.5">
+                  <div>
+                    <span className="text-[10px] font-mono text-emerald-450 block font-bold">{s.id}</span>
+                    <h4 className="text-sm font-extrabold text-white">{s.name}</h4>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEdit('datasources', s)}
+                      className="text-emerald-450 hover:text-emerald-400 p-1"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete('datasources', s.id)}
+                      className="text-rose-400 hover:text-rose-300 p-1"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-400 min-h-[40px] leading-relaxed">{s.description}</p>
+
+                <div className="bg-slate-900/60 p-3 rounded-lg border border-[#2A2A2E] text-[11px] font-mono space-y-1.5 text-slate-300">
+                  <div className="flex justify-between">
+                    <span>Required Interface:</span>
+                    <span className="text-white font-extrabold">{s.required_specs.interface}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Compatible Sizes:</span>
+                    <span className="text-white font-extrabold">{s.required_specs.size_options.join(', ')}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'reports' && (
+        <div className="space-y-6">
+          {/* Dashboard Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Total Ingested</span>
+                <span className="text-2xl font-black text-white block mt-1">{disks.length}</span>
+              </div>
+              <div className="h-10 w-10 bg-blue-950/40 border border-blue-900/30 rounded-lg flex items-center justify-center text-blue-400">
+                <HardDrive className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">In Duplication Pipe</span>
+                <span className="text-2xl font-black text-white block mt-1">
+                  {disks.filter(d => d.status === 'received' || d.status === 'copying').length}
+                </span>
+              </div>
+              <div className="h-10 w-10 bg-emerald-950/40 border border-emerald-900/30 rounded-lg flex items-center justify-center text-emerald-400">
+                <Activity className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Completed (Not Picked)</span>
+                <span className="text-2xl font-black text-white block mt-1">
+                  {disks.filter(d => d.status === 'completed' || d.status === 'failed').length}
+                </span>
+              </div>
+              <div className="h-10 w-10 bg-purple-950/40 border border-purple-900/30 rounded-lg flex items-center justify-center text-purple-400">
+                <Barcode className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Returned & Closed</span>
+                <span className="text-2xl font-black text-white block mt-1">
+                  {disks.filter(d => d.status === 'picked_up').length}
+                </span>
+              </div>
+              <div className="h-10 w-10 bg-slate-900/40 border border-[#2A2A2E] rounded-lg flex items-center justify-center text-slate-400">
+                <Check className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* CUMULATIVE FLOW AREA CHART */}
+            <div className="lg:col-span-2 bg-[#16161A] border border-[#2A2A2E] rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <TrendingUp className="h-4 w-4 text-emerald-400" />
+                    Replication Cumulative Growth Timeline
+                  </h4>
+                  <p className="text-[11px] text-slate-400">Historical sequence of client drives transitioning through the ingestion & copying stages</p>
+                </div>
+              </div>
+
+              {reportsData.length > 0 ? (
+                <div className="h-[320px] w-full text-xs">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={reportsData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorAccepted" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#60A5FA" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#60A5FA" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorCompleted" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10B981" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorReturned" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2E" />
+                      <XAxis dataKey="label" stroke="#7F7F8F" />
+                      <YAxis stroke="#7F7F8F" />
+                      <Tooltip contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
+                      <Legend />
+                      <Area type="monotone" dataKey="Accepted Drives" stroke="#60A5FA" strokeWidth={2} fillOpacity={1} fill="url(#colorAccepted)" />
+                      <Area type="monotone" dataKey="Completed Duplications" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorCompleted)" />
+                      <Area type="monotone" dataKey="Returned to Clients" stroke="#8B5CF6" strokeWidth={2} fillOpacity={1} fill="url(#colorReturned)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-xs text-slate-500 font-mono bg-[#0E0E10] border border-dashed border-[#2A2A2E] rounded-xl">
+                  Not enough historical database transactions to populate progression timeline.
+                </div>
+              )}
+            </div>
+
+            {/* STATUS DISTRIBUTION PIE/BAR CHART */}
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <Activity className="h-4 w-4 text-emerald-400" />
+                    Active Status Volume Breakdown
+                  </h4>
+                  <p className="text-[11px] text-slate-400">Total volume of storage units grouped by processing status</p>
+                </div>
+              </div>
+
+              {disks.length > 0 ? (
+                <div className="h-[320px] w-full text-xs flex flex-col justify-between">
+                  <div className="h-[250px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={statusDistribution} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2E" />
+                        <XAxis dataKey="name" stroke="#7F7F8F" />
+                        <YAxis stroke="#7F7F8F" />
+                        <Tooltip cursor={{ fill: '#2A2A2E', opacity: 0.2 }} contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
+                        <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                          {statusDistribution.map((entry, index) => (
+                            <Bar key={`bar-${index}`} fill={entry.fill} dataKey="count" />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-1 text-center font-mono text-[9px] text-slate-400 mt-2">
+                    {statusDistribution.map((s, i) => (
+                      <div key={i} className="space-y-1">
+                        <div className="h-1.5 rounded-full mx-auto w-6" style={{ backgroundColor: s.fill }} />
+                        <div className="font-extrabold text-white">{s.count}</div>
+                        <div className="truncate">{s.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-xs text-slate-500 font-mono bg-[#0E0E10] border border-dashed border-[#2A2A2E] rounded-xl">
+                  Empty physical catalog registry.
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ADD / EDIT MODAL */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#16161A] border border-slate-700/50 rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="bg-slate-900/60 p-4 border-b border-[#2A2A2E] flex justify-between items-center">
+              <h4 className="text-sm font-bold text-white uppercase tracking-wider font-sans">
+                {editingId ? `Edit ${activeTab === 'disks' ? 'Drive Record' : 'Dataset Source'}` : `Create New ${activeTab === 'disks' ? 'Drive Record' : 'Dataset Source'}`}
+              </h4>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-slate-400 hover:text-slate-200 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={activeTab === 'disks' ? handleDiskSubmit : handleSourceSubmit} className="p-5 space-y-4">
+              {activeTab === 'disks' ? (
+                <>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Disk Sequence ID</label>
+                    <input
+                      type="text"
+                      disabled={!!editingId}
+                      value={diskForm.id}
+                      onChange={(e) => setDiskForm({...diskForm, id: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] disabled:opacity-50 rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500 font-mono font-bold"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Manufacturer</label>
+                    <input
+                      type="text"
+                      required
+                      value={diskForm.hd_manufacturer}
+                      onChange={(e) => setDiskForm({...diskForm, hd_manufacturer: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Model Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={diskForm.hd_model}
+                      onChange={(e) => setDiskForm({...diskForm, hd_model: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Serial Number</label>
+                    <input
+                      type="text"
+                      required
+                      value={diskForm.hd_serial}
+                      onChange={(e) => setDiskForm({...diskForm, hd_serial: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500 font-mono font-bold"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Capacity Size</label>
+                      <select
+                        value={diskForm.hd_size}
+                        onChange={(e) => setDiskForm({...diskForm, hd_size: e.target.value})}
+                        className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-2.5 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                      >
+                        {['4TB', '6TB', '8TB', '10TB', '12TB', '16TB', '18TB', '20TB', '24TB'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Spindle Speed</label>
+                      <input
+                        type="text"
+                        value={diskForm.hd_speed}
+                        onChange={(e) => setDiskForm({...diskForm, hd_speed: e.target.value})}
+                        className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Allocated Source Dataset</label>
+                    <select
+                      value={diskForm.source_requested_id}
+                      onChange={(e) => setDiskForm({...diskForm, source_requested_id: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-2.5 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                    >
+                      {datasources.map(s => <option key={s.id} value={s.id}>{s.name} ({s.id})</option>)}
+                    </select>
+                  </div>
+
+                  {editingId && (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Active status</label>
+                      <select
+                        value={diskForm.status}
+                        onChange={(e) => setDiskForm({...diskForm, status: e.target.value as any})}
+                        className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-2.5 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                      >
+                        <option value="received">Accepted</option>
+                        <option value="copying">Copying</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="picked_up">Returned</option>
+                      </select>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Source Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Wikipedia Offline Mirror"
+                      value={sourceForm.name}
+                      onChange={(e) => setSourceForm({...sourceForm, name: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Description</label>
+                    <textarea
+                      required
+                      rows={3}
+                      placeholder="Enter description of dataset contents..."
+                      value={sourceForm.description}
+                      onChange={(e) => setSourceForm({...sourceForm, description: e.target.value})}
+                      className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Physical Interface</label>
+                      <input
+                        type="text"
+                        required
+                        value={sourceForm.interface}
+                        onChange={(e) => setSourceForm({...sourceForm, interface: e.target.value})}
+                        className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Compatible sizes (comma sep)</label>
+                      <input
+                        type="text"
+                        required
+                        value={sourceForm.size_options}
+                        onChange={(e) => setSourceForm({...sourceForm, size_options: e.target.value})}
+                        className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-[#2A2A2E]">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 bg-[#0E0E10] border border-[#2A2A2E] text-slate-300 hover:text-white text-xs font-bold rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg cursor-pointer shadow-md"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
