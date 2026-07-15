@@ -1,5 +1,11 @@
 # Data Duplication Village web app
 
+# TL;DR
+
+CLICK THIS AND DO WHAT IT SAYS BELOW:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/DataDuplicationVillage/ddv)
+
 # Setup
 
 1. Get python, make sure it's in your path (Windows: `winget install python3`)
