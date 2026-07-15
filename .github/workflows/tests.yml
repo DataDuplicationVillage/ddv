@@ -1,0 +1,57 @@
+name: Django Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install django django-unfold django-guardian qrcode
+
+      - name: Run migrations
+        run: |
+          python manage.py migrate
+          python manage.py migrate --database=replica
+
+      - name: Run test suite
+        run: python manage.py test tracker.tests -v 2
+
+  frontend-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ddv-drive-tracker/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: ddv-drive-tracker
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ddv-drive-tracker
+        run: npm run build
