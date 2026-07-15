@@ -241,11 +241,7 @@ export default function App() {
         
         {activeTab === 'kiosk' ? (
           /* Public unauthenticated status lookup kiosk */
-          <KioskTerminal 
-            onTableUpdateNotification={(table, action, id) => {
-              triggerVisualPing(`Altered state of \`${table}\` via Public Kiosk check-in [ID: ${id}]`);
-            }}
-          />
+          <KioskTerminal />
         ) : !currentUser ? (
           /* Authentication wrapper for Admin, Volunteer & Processing interfaces */
           <div className="flex flex-col items-center justify-center min-h-[420px] py-12 px-4 sm:px-6 lg:px-8">
