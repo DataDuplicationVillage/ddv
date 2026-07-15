@@ -737,7 +737,12 @@ def api_kiosk_lookup_disk(request, disk_id):
                 }
             )
 
-    return JsonResponse({'found': True, 'disk_id': disk.id, 'status_logs': logs})
+    return JsonResponse({
+        'found': True,
+        'disk_id': disk.id,
+        'disk': _serialize_disk(disk),
+        'status_logs': logs,
+    })
 
 
 @require_http_methods(['GET'])

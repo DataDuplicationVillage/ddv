@@ -89,6 +89,30 @@ class ApiContractTests(TestCase):
         self.assertEqual(delete_res.status_code, 200)
         self.assertTrue(delete_res.json().get('success'))
 
+    def test_lookup_and_update_disk_contract_exposes_full_payload(self):
+        create_res = self._create_contract_disk(disk_id='disk-lookup-001', serial='SN-LOOKUP-001')
+        self.assertEqual(create_res.status_code, 201)
+
+        lookup_res = self.client.get('/api/kiosk/lookup-disk/disk-lookup-001')
+        self.assertEqual(lookup_res.status_code, 200)
+        lookup_body = lookup_res.json()
+        self.assertIn('disk', lookup_body)
+        self.assertEqual(lookup_body['disk']['id'], 'disk-lookup-001')
+        self.assertEqual(lookup_body['disk']['source_requested_id'], 'DS-A')
+
+        update_res = self._put_json(
+            '/api/disks/disk-lookup-001',
+            {
+                'source_requested_id': 'DS-B',
+                'hd_manufacturer': 'Western Digital',
+                'operator': 'qa-suite',
+            },
+        )
+        self.assertEqual(update_res.status_code, 200)
+        updated_body = update_res.json()
+        self.assertEqual(updated_body['source_requested_id'], 'DS-B')
+        self.assertEqual(updated_body['hd_manufacturer'], 'Western Digital')
+
     def test_replication_stats_contract_shape(self):
         # Trigger at least one replication log entry.
         self._create_contract_disk(disk_id='disk-repl-001', serial='SN-REPL-001')

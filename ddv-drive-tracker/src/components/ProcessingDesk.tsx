@@ -30,7 +30,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   const [selectedDisk, setSelectedDisk] = useState<Disk | null>(null);
 
   // Batch states & Scanner Terminal support
-  const [activeTab, setActiveTab] = useState<'inspector' | 'batch_scanner'>('inspector');
+  const [activeTab, setActiveTab] = useState<'inspector' | 'batch_scanner' | 'edit_drive'>('inspector');
   const [batchStatus, setBatchStatus] = useState<Disk['status']>('copying');
   const [scanInput, setScanInput] = useState('');
   const [scannedDisks, setScannedDisks] = useState<{ disk: Disk; status: 'success' | 'warning'; message?: string }[]>([]);
@@ -52,6 +52,26 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
 
   // Ticket Modal printer emulator state
   const [printedTicketDisk, setPrintedTicketDisk] = useState<Disk | null>(null);
+
+  // Drive lookup/edit state for processing edits
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [lookupTarget, setLookupTarget] = useState<Disk | null>(null);
+  const [lookupResult, setLookupResult] = useState<{ disk: Disk; status_logs: Array<{ id: string; status: string; timestamp: string; operator: string; description: string }> } | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const [isLookupLoading, setIsLookupLoading] = useState(false);
+  const [isLookupSaving, setIsLookupSaving] = useState(false);
+  const [lookupForm, setLookupForm] = useState({
+    id: '',
+    hd_manufacturer: '',
+    hd_model: '',
+    hd_serial: '',
+    hd_size: '8TB',
+    hd_speed: '7200 RPM',
+    source_requested_id: '',
+    status: 'received' as Disk['status'],
+    received_time: '',
+    hd_image: ''
+  });
 
   const fetchState = async () => {
     setLoading(true);
@@ -395,6 +415,109 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   const cancelSimulation = () => {
     setCopyProgress(null);
     setCopyingDiskId(null);
+  };
+
+  const handleLookupDisk = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const normalizedQuery = lookupQuery.trim();
+    if (!normalizedQuery) return;
+
+    setIsLookupLoading(true);
+    setLookupError('');
+    setLookupTarget(null);
+    setLookupResult(null);
+
+    try {
+      const lookupRes = await fetch(`/api/kiosk/lookup-disk/${encodeURIComponent(normalizedQuery)}`);
+      if (!lookupRes.ok) {
+        throw new Error('Drive record not found. Check the ID or serial number and try again.');
+      }
+
+      const lookupData = await lookupRes.json();
+      if (!lookupData?.found || !lookupData?.disk) {
+        throw new Error('Drive record could not be loaded.');
+      }
+
+      setLookupResult(lookupData);
+      setLookupTarget(lookupData.disk);
+      setLookupForm({
+        id: lookupData.disk.id || '',
+        hd_manufacturer: lookupData.disk.hd_manufacturer || '',
+        hd_model: lookupData.disk.hd_model || '',
+        hd_serial: lookupData.disk.hd_serial || '',
+        hd_size: lookupData.disk.hd_size || '8TB',
+        hd_speed: lookupData.disk.hd_speed || '7200 RPM',
+        source_requested_id: lookupData.disk.source_requested_id || '',
+        status: lookupData.disk.status || 'received',
+        received_time: lookupData.disk.received_time || '',
+        hd_image: lookupData.disk.hd_image || ''
+      });
+    } catch (err: any) {
+      console.error(err);
+      setLookupError(err.message || 'Lookup failed.');
+    } finally {
+      setIsLookupLoading(false);
+    }
+  };
+
+  const handleLookupSave = async () => {
+    if (!lookupTarget) return;
+
+    if (!lookupForm.hd_manufacturer || !lookupForm.hd_model || !lookupForm.hd_serial || !lookupForm.source_requested_id) {
+      alert('Please complete the drive metadata and select a source before saving edits.');
+      return;
+    }
+
+    setIsLookupSaving(true);
+    try {
+      const updateRes = await fetch(`/api/disks/${lookupTarget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hd_manufacturer: lookupForm.hd_manufacturer,
+          hd_model: lookupForm.hd_model,
+          hd_serial: lookupForm.hd_serial,
+          hd_size: lookupForm.hd_size,
+          hd_speed: lookupForm.hd_speed,
+          source_requested_id: lookupForm.source_requested_id,
+          status: lookupForm.status,
+          received_time: lookupForm.received_time || null,
+          hd_image: lookupForm.hd_image || null,
+          operator: 'Processing Desk'
+        })
+      });
+
+      if (!updateRes.ok) {
+        const err = await updateRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Unable to save drive updates.');
+      }
+
+      const updatedDisk: Disk = await updateRes.json();
+      setLookupTarget(updatedDisk);
+      setLookupForm({
+        id: updatedDisk.id || '',
+        hd_manufacturer: updatedDisk.hd_manufacturer || '',
+        hd_model: updatedDisk.hd_model || '',
+        hd_serial: updatedDisk.hd_serial || '',
+        hd_size: updatedDisk.hd_size || '8TB',
+        hd_speed: updatedDisk.hd_speed || '7200 RPM',
+        source_requested_id: updatedDisk.source_requested_id || '',
+        status: updatedDisk.status || 'received',
+        received_time: updatedDisk.received_time || '',
+        hd_image: updatedDisk.hd_image || ''
+      });
+      setLookupResult(prev => prev ? { ...prev, disk: updatedDisk } : prev);
+      setDisks(prev => prev.map(d => d.id === updatedDisk.id ? updatedDisk : d));
+      setSelectedDisk(updatedDisk);
+      onTableUpdateNotification('disks', 'UPDATE', updatedDisk.id);
+      fetchState();
+      alert(`Drive ${updatedDisk.id} was updated successfully.`);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to update drive record.');
+    } finally {
+      setIsLookupSaving(false);
+    }
   };
 
   const filteredDisks = disks.filter(d => 
@@ -836,7 +959,210 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
         </div>
       </div>
 
-      <div className="bg-[#16161A] rounded-xl border border-[#2A2A2E] p-5 shadow-sm mt-6">
+      <div className="flex flex-wrap gap-2 border-b border-[#2A2A2E] pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab('inspector')}
+          className={`rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition ${activeTab === 'inspector' ? 'bg-blue-600 text-white' : 'bg-[#0E0E10] text-slate-400 hover:text-white'}`}
+        >
+          Inspector
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('batch_scanner')}
+          className={`rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition ${activeTab === 'batch_scanner' ? 'bg-emerald-600 text-white' : 'bg-[#0E0E10] text-slate-400 hover:text-white'}`}
+        >
+          Batch Scanner
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('edit_drive')}
+          className={`rounded-lg px-3.5 py-2 text-xs font-bold uppercase tracking-wider transition ${activeTab === 'edit_drive' ? 'bg-amber-600 text-white' : 'bg-[#0E0E10] text-slate-400 hover:text-white'}`}
+        >
+          Edit Existing Drive
+        </button>
+      </div>
+
+      {activeTab === 'edit_drive' && (
+        <div className="bg-[#16161A] rounded-xl border border-[#2A2A2E] p-5 shadow-sm mt-6">
+          <div className="mb-6 rounded-xl border border-amber-900/40 bg-[#0E0E10] p-4 space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-200">Edit existing drive record</h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  Search by sequence ID or serial number to review the current status and correct drive metadata, source assignment, or workflow state.
+                </p>
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-amber-400">PROCESSING CORRECTIONS</div>
+            </div>
+
+            <form onSubmit={handleLookupDisk} className="flex flex-col gap-3 sm:flex-row">
+              <label className="flex-1">
+                <span className="sr-only">Drive lookup</span>
+                <input
+                  type="text"
+                  value={lookupQuery}
+                  onChange={(e) => setLookupQuery(e.target.value)}
+                  placeholder="Enter drive ID or serial number"
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#111113] px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={isLookupLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-amber-500 disabled:opacity-50"
+              >
+                {isLookupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                Lookup
+              </button>
+            </form>
+
+            {lookupError && (
+              <div className="rounded-lg border border-rose-900/40 bg-rose-950/20 p-3 text-xs text-rose-300">
+                {lookupError}
+              </div>
+            )}
+
+            {lookupResult && lookupTarget && (
+              <div className="space-y-4 rounded-xl border border-[#2A2A2E] bg-[#111113] p-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">Current status</span>
+                      <span className="rounded-full border border-amber-900/40 bg-amber-950/40 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-amber-300">
+                        {lookupForm.status}
+                      </span>
+                    </div>
+                    <div className="text-sm font-black text-white">{lookupTarget.id}</div>
+                    <div className="text-xs text-slate-400">
+                      {lookupTarget.hd_manufacturer} {lookupTarget.hd_model} • S/N {lookupTarget.hd_serial}
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    Last updated: {lookupTarget.received_time ? new Date(lookupTarget.received_time).toLocaleString() : 'Unknown'}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Manufacturer</label>
+                      <input
+                        type="text"
+                        value={lookupForm.hd_manufacturer}
+                        onChange={(e) => setLookupForm({ ...lookupForm, hd_manufacturer: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Model</label>
+                      <input
+                        type="text"
+                        value={lookupForm.hd_model}
+                        onChange={(e) => setLookupForm({ ...lookupForm, hd_model: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Serial number</label>
+                      <input
+                        type="text"
+                        value={lookupForm.hd_serial}
+                        onChange={(e) => setLookupForm({ ...lookupForm, hd_serial: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Capacity</label>
+                      <select
+                        value={lookupForm.hd_size}
+                        onChange={(e) => setLookupForm({ ...lookupForm, hd_size: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        {['4TB', '6TB', '8TB', '10TB', '12TB', '16TB', '18TB', '20TB', '24TB'].map(size => <option key={size} value={size}>{size}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Speed</label>
+                      <input
+                        type="text"
+                        value={lookupForm.hd_speed}
+                        onChange={(e) => setLookupForm({ ...lookupForm, hd_speed: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Source dataset</label>
+                      <select
+                        value={lookupForm.source_requested_id}
+                        onChange={(e) => setLookupForm({ ...lookupForm, source_requested_id: e.target.value })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        <option value="">Select a source…</option>
+                        {(datasources.length > 0 ? datasources : ['A', 'B', 'C', 'D', 'E'].map(l => ({
+                          id: `DS-${l}`,
+                          name: `Source ${l}`,
+                          description: 'External Allocation',
+                          required_specs: { interface: 'SATA 3', size_options: l === 'B' || l === 'C' ? ['6TB', '8TB', '12TB'] : ['8TB', '12TB'] }
+                        }))).map(source => (
+                          <option key={source.id} value={source.id}>{source.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Drive status</label>
+                      <select
+                        value={lookupForm.status}
+                        onChange={(e) => setLookupForm({ ...lookupForm, status: e.target.value as Disk['status'] })}
+                        className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        {['received','copying','completed','failed','picked_up'].map(status => (
+                          <option key={status} value={status}>{status}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {lookupForm.source_requested_id && (() => {
+                  const matchingSource = datasources.find(src => src.id === lookupForm.source_requested_id);
+                  const isCompatible = matchingSource ? matchingSource.required_specs?.size_options?.includes(lookupForm.hd_size) : true;
+                  return (
+                    <div className={`rounded-lg border p-3 text-[11px] ${isCompatible ? 'border-emerald-900/40 bg-emerald-950/20 text-emerald-300' : 'border-amber-900/40 bg-amber-950/20 text-amber-300'}`}>
+                      {isCompatible ? 'Selected source is compatible with the current capacity.' : `Selected source requires ${matchingSource?.required_specs?.size_options?.join('/') || 'a compatible capacity'} for this drive.`}
+                    </div>
+                  );
+                })()}
+
+                <div className="flex flex-col gap-3 border-t border-[#2A2A2E] pt-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    {lookupResult.status_logs?.slice(0, 3).map(log => (
+                      <div key={log.id} className="mt-1 first:mt-0">
+                        <span className="text-slate-400">{new Date(log.timestamp).toLocaleString()}</span> • {log.status} • {log.operator}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isLookupSaving}
+                    onClick={handleLookupSave}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    {isLookupSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                    Save corrections
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab !== 'edit_drive' && (
+        <div className="bg-[#16161A] rounded-xl border border-[#2A2A2E] p-5 shadow-sm mt-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[#2A2A2E] gap-4 mb-5">
           <div>
             <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
@@ -1079,7 +1405,8 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
             </div>
           );
         })()}
-        </div>
+      </div>
+    )}
 
       {/* PRINT PREVIEW / TICKET TAG DIALOG Overlay */}
       {printedTicketDisk && (
