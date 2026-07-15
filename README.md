@@ -10,4 +10,28 @@
 1. `python3 manage.py migrate`
 1. `python3 manage.py migrate --database=replica`
 1. `python3 manage.py createsuperuser`
+1. Build frontend SPA assets:
+	- `cd ddv-drive-tracker`
+	- `npm install`
+	- `npm run build`
+	- `cd ..`
 1. `python3 manage.py runserver`
+
+# Testing
+
+Run API contract and integration checks:
+
+1. Windows PowerShell:
+	- `./run-tests.ps1`
+1. Unix/macOS shell:
+	- `./run-tests.sh`
+1. Direct Django command:
+	- `python3 manage.py test tracker.tests -v 2`
+
+These tests cover:
+
+1. Auth success and failure contracts
+1. Disk lifecycle transitions and kiosk lookup
+1. Replication stats contract shape
+1. Negative-path API behavior (404/400 contract checks)
+1. Frontend-to-backend bootstrap probes and SPA fallback route checks

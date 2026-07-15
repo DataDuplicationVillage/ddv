@@ -1,0 +1,247 @@
+{
+  "users": [
+    {
+      "username": "admin",
+      "role": "admin",
+      "name": "System Administrator"
+    },
+    {
+      "username": "volunteer",
+      "role": "volunteer",
+      "name": "Volunteer Operator"
+    },
+    {
+      "username": "processing",
+      "role": "processing",
+      "name": "Processing Operator"
+    },
+    {
+      "username": "scott",
+      "role": "user",
+      "name": "Scott Martin"
+    },
+    {
+      "username": "flora",
+      "role": "user",
+      "name": "Flora Vance"
+    }
+  ],
+  "datasources": [
+    {
+      "id": "DS-A",
+      "name": "Source A",
+      "description": "Manual external copying source. Detailed configuration and naming pending.",
+      "required_specs": {
+        "interface": "All Interfaces",
+        "size_options": [
+          "8TB",
+          "12TB"
+        ]
+      }
+    },
+    {
+      "id": "DS-B",
+      "name": "Source B",
+      "description": "Manual external copying source. Detailed configuration and naming pending.",
+      "required_specs": {
+        "interface": "All Interfaces",
+        "size_options": [
+          "6TB",
+          "8TB",
+          "12TB"
+        ]
+      }
+    },
+    {
+      "id": "DS-C",
+      "name": "Source C",
+      "description": "Manual external copying source. Detailed configuration and naming pending.",
+      "required_specs": {
+        "interface": "All Interfaces",
+        "size_options": [
+          "6TB",
+          "8TB",
+          "12TB"
+        ]
+      }
+    },
+    {
+      "id": "DS-D",
+      "name": "Source D",
+      "description": "Manual external copying source. Detailed configuration and naming pending.",
+      "required_specs": {
+        "interface": "All Interfaces",
+        "size_options": [
+          "8TB",
+          "12TB"
+        ]
+      }
+    },
+    {
+      "id": "DS-E",
+      "name": "Source E",
+      "description": "Manual external copying source. Detailed configuration and naming pending.",
+      "required_specs": {
+        "interface": "All Interfaces",
+        "size_options": [
+          "8TB",
+          "12TB"
+        ]
+      }
+    }
+  ],
+  "disks": [
+    {
+      "id": "disk-101-kfahk834Ws893rhP",
+      "hd_manufacturer": "Seagate",
+      "hd_model": "IronWolf ST8000VN004",
+      "hd_serial": "SN-NEW001",
+      "hd_size": "8TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-A",
+      "received_time": "2026-06-23T08:15:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-102-ZxjR7pLmQ9vN2t4W",
+      "hd_manufacturer": "Western Digital",
+      "hd_model": "Red Plus WD60EFAX",
+      "hd_serial": "SN-NEW002",
+      "hd_size": "6TB",
+      "hd_speed": "5600 RPM",
+      "source_requested_id": "DS-B",
+      "received_time": "2026-06-23T08:16:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-103-Y8sK3nP2qRfWcTb7",
+      "hd_manufacturer": "Toshiba",
+      "hd_model": "X300 HDWR460",
+      "hd_serial": "SN-NEW003",
+      "hd_size": "6TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-C",
+      "received_time": "2026-06-23T08:17:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-104-HkM9bC5dF4jX8z7Q",
+      "hd_manufacturer": "Seagate",
+      "hd_model": "BarraCuda ST8000DM",
+      "hd_serial": "SN-NEW004",
+      "hd_size": "8TB",
+      "hd_speed": "5400 RPM",
+      "source_requested_id": "DS-D",
+      "received_time": "2026-06-23T08:18:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-105-PqRt2mV5nYx8w9zS",
+      "hd_manufacturer": "Western Digital",
+      "hd_model": "Gold WD120",
+      "hd_serial": "SN-NEW005",
+      "hd_size": "12TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-E",
+      "received_time": "2026-06-23T08:19:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-106-LjK4h3g2f1s0d9a8",
+      "hd_manufacturer": "Toshiba",
+      "hd_model": "N300 HDWG120",
+      "hd_serial": "SN-NEW006",
+      "hd_size": "12TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-A",
+      "received_time": "2026-06-23T08:20:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-107-BvC5d4e3f2g1h0jK",
+      "hd_manufacturer": "Samsung",
+      "hd_model": "870 EVO MZ-8T0",
+      "hd_serial": "SN-NEW007",
+      "hd_size": "8TB",
+      "hd_speed": "SATA SSD",
+      "source_requested_id": "DS-B",
+      "received_time": "2026-06-23T08:21:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-108-MnB6v5c4x3z2a1sD",
+      "hd_manufacturer": "HGST",
+      "hd_model": "Ultrastar HE12",
+      "hd_serial": "SN-NEW008",
+      "hd_size": "12TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-C",
+      "received_time": "2026-06-23T08:22:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-109-LkJ9h8g7f6d5s4a3",
+      "hd_manufacturer": "Western Digital",
+      "hd_model": "Red Pro WD121",
+      "hd_serial": "SN-NEW009",
+      "hd_size": "12TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-D",
+      "received_time": "2026-06-23T08:23:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    },
+    {
+      "id": "disk-110-QrW4e3r2t1y0u9i8",
+      "hd_manufacturer": "Seagate",
+      "hd_model": "SkyHawk ST8000",
+      "hd_serial": "SN-NEW010",
+      "hd_size": "8TB",
+      "hd_speed": "7200 RPM",
+      "source_requested_id": "DS-E",
+      "received_time": "2026-06-23T08:24:00.000Z",
+      "copy_start_time": null,
+      "copy_complete_time": null,
+      "copy_fail_time": null,
+      "pickup_time": null,
+      "status": "received"
+    }
+  ],
+  "replication_logs": [],
+  "disk_status_logs": []
+}

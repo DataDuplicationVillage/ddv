@@ -4,6 +4,10 @@ from guardian.shortcuts import assign_perm
 from .models import DiskHavings, DiskHaver, Disk, DiskModel, DataSource
 
 def sync_to_replica_on_save_handler(sender, instance, **kwargs):
+    using = kwargs.get('using')
+    if using == 'replica':
+        return
+
     # Save a direct copy into the replica sqlite3 database using multi-db routing
     try:
         instance.save(using='replica')
@@ -11,6 +15,10 @@ def sync_to_replica_on_save_handler(sender, instance, **kwargs):
         print(f"Replica save failed for {sender}: {e}")
 
 def sync_to_replica_on_delete_handler(sender, instance, **kwargs):
+    using = kwargs.get('using')
+    if using == 'replica':
+        return
+
     try:
         instance.delete(using='replica')
     except Exception:

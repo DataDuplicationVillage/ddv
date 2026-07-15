@@ -1,6 +1,21 @@
+from pathlib import Path
+
+from django.conf import settings
+from django.http import HttpResponse
 from django.shortcuts import render, redirect
-from django.http import JsonResponse
 from .models import DiskHavings
+
+
+def spa_index(request):
+    dist_index = Path(settings.BASE_DIR) / 'ddv-drive-tracker' / 'dist' / 'index.html'
+    if not dist_index.exists():
+        return HttpResponse(
+            'Frontend build not found. Run "npm install" and "npm run build" in ddv-drive-tracker.',
+            status=503,
+            content_type='text/plain',
+        )
+
+    return HttpResponse(dist_index.read_text(encoding='utf-8'), content_type='text/html')
 
 def kiosk_home(request):
     if request.method == 'POST':
