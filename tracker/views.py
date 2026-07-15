@@ -7,7 +7,7 @@ from .models import DiskHavings
 
 
 def spa_index(request):
-    dist_index = Path(settings.BASE_DIR) / 'ddv-drive-tracker' / 'dist' / 'index.html'
+dist_index = Path(settings.FRONTEND_DIST_DIR) / 'index.html'
     if not dist_index.exists():
         return HttpResponse(
             'Frontend build not found. Run "npm install" and "npm run build" in ddv-drive-tracker.',
