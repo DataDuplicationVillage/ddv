@@ -107,7 +107,8 @@ def _seed_default_users():
             parts = full_name.split(' ', 1)
             user.first_name = parts[0]
             user.last_name = parts[1] if len(parts) > 1 else ''
-        _set_role(user, role)
+        if created:
+            _set_role(user, role)
         user.save()
 
 
