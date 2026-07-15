@@ -173,7 +173,7 @@ def _ensure_system_haver():
 
 def _create_replication_log(action, table_name, record_id, payload, description=''):
     ReplicationLog.objects.create(
-        id=f'LOG-{int(datetime.now().timestamp() * 1000)}-{random.randint(100,999)}',
+        id=f'LOG-{uuid.uuid4().hex}',
         action=action,
         table_name=table_name,
         record_id=record_id,
@@ -184,7 +184,7 @@ def _create_replication_log(action, table_name, record_id, payload, description=
 
 def _create_status_log(disk, status, operator='System', description=''):
     DiskStatusLog.objects.create(
-        id=f'STLOG-{int(datetime.now().timestamp() * 1000)}-{random.randint(100,999)}',
+        id=f'STLOG-{uuid.uuid4().hex}',
         disk=disk,
         status=status,
         operator=operator,
