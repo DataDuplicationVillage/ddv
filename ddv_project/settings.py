@@ -33,7 +33,7 @@ ROOT_URLCONF = 'ddv_project.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -74,4 +74,6 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
+FRONTEND_DIST_DIR = BASE_DIR / 'ddv-drive-tracker' / 'dist'
+STATICFILES_DIRS = [FRONTEND_DIST_DIR] if FRONTEND_DIST_DIR.exists() else []
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

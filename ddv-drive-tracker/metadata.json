@@ -1,0 +1,6 @@
+{
+  "name": "DDV Drive Tracker",
+  "description": "An inventory and drive handling tracker application to receive, tag, process, and return hard drives with dual-host Master/Replica architecture and label parsing scanning capabilities.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
