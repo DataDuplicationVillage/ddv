@@ -159,6 +159,16 @@ class ApiContractTests(TestCase):
 
     def test_frontend_bootstrap_and_route_integration_contract(self):
         # SPA host and fallback should return HTML while API remains JSON.
+        from pathlib import Path
+        from django.conf import settings
+
+        dist_dir = Path(settings.FRONTEND_DIST_DIR)
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        (dist_dir / 'index.html').write_text(
+            '<!doctype html><html><head><meta charset="utf-8" /></head><body><div id="root"></div></body></html>',
+            encoding='utf-8',
+        )
+
         root = self.client.get('/')
         fallback = self.client.get('/volunteer')
         self.assertEqual(root.status_code, 200)
