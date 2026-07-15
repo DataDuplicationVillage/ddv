@@ -1,5 +1,11 @@
+from datetime import date
+
 from django.db import models
 from django.contrib.auth.models import User
+
+
+def get_current_year():
+    return date.today().year
 
 class DiskModel(models.Model):
     make = models.CharField(max_length=255)
@@ -72,7 +78,7 @@ class Duplicator(models.Model):
     manufacturer = models.CharField(max_length=100)
     slots_total = models.PositiveIntegerField(default=0)
     slots_status = models.JSONField(default=list, blank=True)
-    year_in_service = models.PositiveIntegerField(default=2026)
+    year_in_service = models.PositiveIntegerField(default=get_current_year)
 
     def __str__(self):
         return self.name
