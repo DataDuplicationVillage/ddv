@@ -27,5 +27,5 @@ urlpatterns = [
 
     # Single-page app host and fallback routes.
     path('', views.spa_index, name='spa_index'),
-    re_path(r'^(?!api/|legacy/).*$' , views.spa_index, name='spa_fallback'),
+    re_path(r'^(?!api(?:/|$)|legacy(?:/|$)|static/).*$', views.spa_index, name='spa_fallback'),
 ]
