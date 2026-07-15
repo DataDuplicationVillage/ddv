@@ -495,7 +495,7 @@ app.post('/api/datasources', (req, res) => {
   
   db.datasources.push(newSource);
   saveDB(db);
-  res.status(210).json(newSource);
+  res.status(201).json(newSource);
 });
 
 // PUT update datasource
