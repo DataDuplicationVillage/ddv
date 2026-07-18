@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { 
-  HardDrive, Play, CheckCircle, XCircle, RefreshCcw, 
-  Search, Cpu, ArrowRight, Server, Clock, AlertTriangle, 
-  PlayCircle, Printer, Ticket, CheckCircle2, RotateCcw, HelpCircle,
-  AlertCircle, ChevronRight, X, ArrowDown, Barcode, ListPlus, Trash2
+  HardDrive, CheckCircle, RefreshCcw,
+  Search,
+  AlertCircle, X, Barcode, ListPlus, Trash2,
+  Loader2, Check
 } from 'lucide-react';
 import { Disk, DataSource } from '../types';
 
@@ -13,6 +12,26 @@ interface ProcessingDeskProps {
 }
 
 export default function ProcessingDesk({ onTableUpdateNotification }: ProcessingDeskProps) {
+  const normalizedText = (value: unknown) => String(value ?? '').toLowerCase();
+  const isObjectRecord = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object';
+
+  const parseDriveSizeTB = (sizeValue: string) => {
+    const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
+    return match ? Number(match[1]) : NaN;
+  };
+
+  const getSourceMinSizeTB = (source: DataSource | undefined) => {
+    if (!source?.required_specs?.size_options?.length) return NaN;
+    return parseDriveSizeTB(source.required_specs.size_options[0]);
+  };
+
+  const meetsSourceMinimum = (source: DataSource | undefined, driveSize: string) => {
+    const minTB = getSourceMinSizeTB(source);
+    const driveTB = parseDriveSizeTB(driveSize);
+    if (Number.isNaN(minTB) || Number.isNaN(driveTB)) return true;
+    return driveTB >= minTB;
+  };
+
   const [disks, setDisks] = useState<Disk[]>([]);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
   const [duplicators, setDuplicators] = useState<any[]>([]);
@@ -20,13 +39,12 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   const [duplicatorSelectFor, setDuplicatorSelectFor] = useState<{
     diskId: string;
     targetStatus: Disk['status'];
-    isSimulation: boolean;
   } | null>(null);
   const [selectedDuplicatorId, setSelectedDuplicatorId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [deskPage, setDeskPage] = useState(1);
-  const deskPageSize = 16; // 16 cards per page for clean, dense grid views
+  const [deskPageSizeOption, setDeskPageSizeOption] = useState<'10' | '50' | '100' | '200' | 'all'>('10');
   const [selectedDisk, setSelectedDisk] = useState<Disk | null>(null);
 
   // Batch states & Scanner Terminal support
@@ -37,21 +55,11 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   const [isInstantScan, setIsInstantScan] = useState(true);
   const scanInputRef = useRef<HTMLInputElement>(null);
   const multiScanStationRef = useRef<HTMLDivElement>(null);
+  const lastSourceByDuplicatorRef = useRef<Record<string, string>>({});
 
-  // Simulated live copy worker state
-  const [copyProgress, setCopyProgress] = useState<number | null>(null);
-  const [copyingDiskId, setCopyingDiskId] = useState<string | null>(null);
-  const [simulationSpeed, setSimulationSpeed] = useState<number>(80); // ms per tick
-
-  // Interactive replication outcome config
-  const [expectedOutcome, setExpectedOutcome] = useState<'success' | 'failure' | 'random'>('success');
-  
   // Custom in-UI error/status notifications (to bypass blocked alert() calls inside iframe)
   const [uiError, setUiError] = useState<string>('');
   const [uiSuccess, setUiSuccess] = useState<string>('');
-
-  // Ticket Modal printer emulator state
-  const [printedTicketDisk, setPrintedTicketDisk] = useState<Disk | null>(null);
 
   // Drive lookup/edit state for processing edits
   const [lookupQuery, setLookupQuery] = useState('');
@@ -84,21 +92,29 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
       ]);
       if (disksRes.ok) {
         const disksData = await disksRes.json();
-        setDisks(disksData);
+        const nextDisks = Array.isArray(disksData) ? disksData : [];
+        const safeDisks = nextDisks.filter(
+          (item): item is Disk => isObjectRecord(item) && typeof item.id === 'string'
+        );
+        setDisks(safeDisks);
         // Sync selected disk if it is currently focused
         if (selectedDisk) {
-          const freshSel = disksData.find((d: Disk) => d.id === selectedDisk.id);
+          const freshSel = safeDisks.find((d: Disk) => d.id === selectedDisk.id);
           if (freshSel) setSelectedDisk(freshSel);
         }
       }
       if (sourcesRes.ok) {
-        setDatasources(await sourcesRes.json());
+        const sourcesData = await sourcesRes.json();
+        const nextSources = Array.isArray(sourcesData) ? sourcesData : [];
+        setDatasources(nextSources.filter((item): item is DataSource => isObjectRecord(item) && typeof item.id === 'string'));
       }
       if (duplicatorsRes.ok) {
         const dups = await duplicatorsRes.json();
-        setDuplicators(dups);
-        if (dups.length > 0) {
-          setSelectedBatchDuplicatorId(dups[0].id);
+        const nextDuplicators = Array.isArray(dups) ? dups : [];
+        const safeDuplicators = nextDuplicators.filter(isObjectRecord);
+        setDuplicators(safeDuplicators);
+        if (safeDuplicators.length > 0 && typeof safeDuplicators[0].id === 'string') {
+          setSelectedBatchDuplicatorId(safeDuplicators[0].id);
         }
       }
     } catch (err) {
@@ -112,65 +128,6 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   useEffect(() => {
     fetchState();
   }, []);
-
-  // Simulated copy worker loop
-  useEffect(() => {
-    if (copyProgress !== null && copyingDiskId) {
-      if (copyProgress < 100) {
-        const timeout = setTimeout(() => {
-          setCopyProgress(prev => Math.min((prev || 0) + Math.floor(Math.random() * 12) + 6, 100));
-        }, simulationSpeed);
-        return () => clearTimeout(timeout);
-      } else {
-        // Automatically decide outcome based on config selection
-        let finalOutcome: 'completed' | 'failed' = 'completed';
-        if (expectedOutcome === 'failure') {
-          finalOutcome = 'failed';
-        } else if (expectedOutcome === 'random') {
-          finalOutcome = Math.random() < 0.75 ? 'completed' : 'failed';
-        }
-        finalizeSimulatedCopy(copyingDiskId, finalOutcome);
-      }
-    }
-  }, [copyProgress, copyingDiskId, expectedOutcome, simulationSpeed]);
-
-  const finalizeSimulatedCopy = async (diskId: string, resultingStatus: 'completed' | 'failed') => {
-    try {
-      const payload: Partial<Disk> = { status: resultingStatus };
-      if (resultingStatus === 'completed') {
-        payload.copy_complete_time = new Date().toISOString();
-        payload.copy_fail_time = null;
-      } else {
-        payload.copy_fail_time = new Date().toISOString();
-        payload.copy_complete_time = null;
-      }
-
-      const res = await fetch(`/api/disks/${diskId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        const updated = await res.json();
-        setDisks(prev => prev.map(d => d.id === diskId ? updated : d));
-        if (selectedDisk?.id === diskId) setSelectedDisk(updated);
-        onTableUpdateNotification('disks', 'UPDATE', diskId);
-        
-        if (resultingStatus === 'completed') {
-          setUiSuccess(`Verification duplication successful for drive ${diskId}! Dynamic success labels generated.`);
-        } else {
-          setUiError(`Duplication failed for drive ${diskId}. Flagged with update failure code.`);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to complete simulated copy:', err);
-      setUiError('Exception encountered finalizing duplication transaction.');
-    } finally {
-      setCopyProgress(null);
-      setCopyingDiskId(null);
-    }
-  };
 
   const handleUpdateStatus = async (diskId: string, status: Disk['status'], customFields = {}) => {
     setUiError('');
@@ -225,6 +182,20 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
     let failedCount = 0;
     
     for (const diskId of diskIds) {
+      const disk = disks.find(d => d.id === diskId);
+      if (targetStatus === 'copying' && selectedBatchDuplicatorId && disk) {
+        const lastSource = lastSourceByDuplicatorRef.current[selectedBatchDuplicatorId];
+        if (lastSource && lastSource !== disk.source_requested_id) {
+          const confirmed = window.confirm(
+            `Source change detected on duplicator ${selectedBatchDuplicatorId}. Last scanned source was ${lastSource}, this drive is ${disk.source_requested_id}. Continue?`
+          );
+          if (!confirmed) {
+            setUiError(`Batch update paused: source changed from ${lastSource} to ${disk.source_requested_id} on duplicator ${selectedBatchDuplicatorId}.`);
+            break;
+          }
+        }
+      }
+
       const payload: Partial<Disk> = { status: targetStatus };
       
       if (targetStatus === 'copying') {
@@ -261,6 +232,9 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
           setDisks(prev => prev.map(d => d.id === diskId ? updated : d));
           if (selectedDisk?.id === diskId) setSelectedDisk(updated);
           onTableUpdateNotification('disks', 'UPDATE', diskId);
+          if (targetStatus === 'copying' && selectedBatchDuplicatorId && updated.source_requested_id) {
+            lastSourceByDuplicatorRef.current[selectedBatchDuplicatorId] = updated.source_requested_id;
+          }
           successCount++;
         } else {
           failedCount++;
@@ -288,9 +262,11 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
       .replace(/^val-/i, '');  // strip leading val-
       
     // First, check if the scanned barcode matches any configured duplicator name or ID
+    const normalizedCode = normalizedText(cleanedCode);
+
     const foundDuplicator = duplicators.find(d => 
-      d.id.toLowerCase() === cleanedCode.toLowerCase() ||
-      d.name.toLowerCase() === cleanedCode.toLowerCase()
+      normalizedText(d?.id) === normalizedCode ||
+      normalizedText(d?.name) === normalizedCode
     );
 
     if (foundDuplicator) {
@@ -306,11 +282,28 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
 
     // Look for matching disk id or serial
     const foundDisk = disks.find(d => 
-      d.id.toLowerCase() === cleanedCode.toLowerCase() ||
-      d.hd_serial.toLowerCase() === cleanedCode.toLowerCase()
+      normalizedText(d?.id) === normalizedCode ||
+      normalizedText(d?.hd_serial) === normalizedCode
     );
     
     if (foundDisk) {
+      if (batchStatus === 'copying' && selectedBatchDuplicatorId) {
+        const lastSource = lastSourceByDuplicatorRef.current[selectedBatchDuplicatorId];
+        if (lastSource && lastSource !== foundDisk.source_requested_id) {
+          const confirmed = window.confirm(
+            `Source change detected on duplicator ${selectedBatchDuplicatorId}. Last scanned source was ${lastSource}, this drive is ${foundDisk.source_requested_id}. Continue?`
+          );
+          if (!confirmed) {
+            setUiError(`Scan blocked: confirm source change before assigning to ${selectedBatchDuplicatorId}.`);
+            setScanInput('');
+            setTimeout(() => {
+              scanInputRef.current?.focus();
+            }, 50);
+            return;
+          }
+        }
+      }
+
       if (isInstantScan) {
         // If instant mode, trigger individual state update immediately
         handleUpdateStatus(foundDisk.id, batchStatus, batchStatus === 'copying' && selectedBatchDuplicatorId ? { duplicator_id: selectedBatchDuplicatorId } : {});
@@ -324,6 +317,9 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
           },
           ...prev
         ]);
+        if (batchStatus === 'copying' && selectedBatchDuplicatorId) {
+          lastSourceByDuplicatorRef.current[selectedBatchDuplicatorId] = foundDisk.source_requested_id;
+        }
       } else {
         // Queue committal mode
         const alreadyQueued = scannedDisks.some(item => item.disk.id === foundDisk.id);
@@ -382,8 +378,8 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
     }, 50);
   };
 
-  const openDuplicatorSelection = (diskId: string, isSimulation: boolean) => {
-    setDuplicatorSelectFor({ diskId, targetStatus: 'copying', isSimulation });
+  const openDuplicatorSelection = (diskId: string) => {
+    setDuplicatorSelectFor({ diskId, targetStatus: 'copying' });
     if (duplicators.length > 0) {
       setSelectedDuplicatorId(duplicators[0].id);
     } else {
@@ -393,28 +389,11 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
 
   const handleConfirmDuplicator = async () => {
     if (!duplicatorSelectFor) return;
-    const { diskId, targetStatus, isSimulation } = duplicatorSelectFor;
+    const { diskId, targetStatus } = duplicatorSelectFor;
     setDuplicatorSelectFor(null);
 
     // Update status to copying, passing the selected duplicator_id
     await handleUpdateStatus(diskId, targetStatus, { duplicator_id: selectedDuplicatorId, copy_start_time: new Date().toISOString() });
-
-    if (isSimulation) {
-      setCopyingDiskId(diskId);
-      setCopyProgress(1);
-    }
-  };
-
-  // Trigger copy simulation run
-  const triggerSimulationRun = (diskId: string) => {
-    setUiError('');
-    setUiSuccess('');
-    openDuplicatorSelection(diskId, true);
-  };
-
-  const cancelSimulation = () => {
-    setCopyProgress(null);
-    setCopyingDiskId(null);
   };
 
   const handleLookupDisk = async (e?: React.FormEvent) => {
@@ -520,16 +499,19 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
     }
   };
 
+  const normalizedSearchTerm = normalizedText(searchTerm);
+
   const filteredDisks = disks.filter(d => 
-    d.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.hd_serial.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.hd_manufacturer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.hd_model.toLowerCase().includes(searchTerm.toLowerCase())
+    normalizedText(d.id).includes(normalizedSearchTerm) ||
+    normalizedText(d.hd_serial).includes(normalizedSearchTerm) ||
+    normalizedText(d.hd_manufacturer).includes(normalizedSearchTerm) ||
+    normalizedText(d.hd_model).includes(normalizedSearchTerm)
   );
 
   const getStatusCounts = () => {
     const counts = { received: 0, copying: 0, completed: 0, failed: 0, picked_up: 0 };
     disks.forEach(d => {
+      if (!d) return;
       if (counts[d.status] !== undefined) counts[d.status]++;
     });
     return counts;
@@ -541,7 +523,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
   const activeDiskSource = selectedDisk 
     ? datasources.find(src => src.id === selectedDisk.source_requested_id) 
     : null;
-  const recommendedSize = activeDiskSource?.required_specs?.size_options?.join('/') || '8TB / 6TB';
+  const recommendedMinSize = Number.isNaN(getSourceMinSizeTB(activeDiskSource)) ? 'N/A' : `${getSourceMinSizeTB(activeDiskSource)}TB`;
 
   return (
     <div className="space-y-6 font-sans">
@@ -559,7 +541,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
               REPLICATION_MULTI_SCAN_STATION
             </h4>
             <p className="text-xs text-slate-400 mt-1 font-sans">
-              Rapidly batch-update status transitions on multiple physical drives using hardware barcode readers or local simulations.
+              Rapidly batch-update status transitions on multiple physical drives using hardware barcode readers.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -610,39 +592,11 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
             })}
           </div>
 
-          {batchStatus === 'copying' && (
-            <div className="bg-[#0E0E10] border border-blue-900/30 p-4 rounded-xl max-w-md space-y-2">
-              <label className="block text-[10px] font-mono uppercase font-black text-blue-400 tracking-wider">
-                ⚙️ Select Target Duplicator for COPY IN PROGRESS
-              </label>
-              <select
-                value={selectedBatchDuplicatorId}
-                onChange={(e) => setSelectedBatchDuplicatorId(e.target.value)}
-                className="w-full bg-[#111113] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-blue-500 font-mono"
-              >
-                {duplicators.length === 0 ? (
-                  <option value="">No Duplicators Available (Create in Admin Portal)</option>
-                ) : (
-                  duplicators.map(dup => {
-                    const functionalCount = dup.slots_status.filter(Boolean).length;
-                    return (
-                      <option key={dup.id} value={dup.id}>
-                        {dup.name} ({dup.manufacturer}) — {functionalCount}/{dup.slots_total} working slots
-                      </option>
-                    );
-                  })
-                )}
-              </select>
-              <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
-                Every subsequent scanned or triggered drive will be registered onto this duplicator system, appending an audit record to its history.
-              </p>
-            </div>
-          )}
         </div>
 
-        {/* STEP 2 and SIMULATION TRIGGERS side-by-side inside grid */}
+        {/* STEP 2 scanner input */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-6 space-y-4">
+          <div className="lg:col-span-12 space-y-4">
             {/* 3. Scan Command Laser Bar & Interactive Input Box */}
             <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-5 relative overflow-hidden space-y-4 shadow-inner h-full flex flex-col justify-between">
               {/* Pseudo neon laser line animation */}
@@ -671,7 +625,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
                 </label>
               </div>
 
-              <form onSubmit={handleScanSubmit} className="flex gap-2 my-2">
+              <form onSubmit={handleScanSubmit} className="flex flex-col md:flex-row gap-2 my-2 items-stretch md:items-center">
                 <div className="relative flex-1">
                   <input
                     ref={scanInputRef}
@@ -692,6 +646,30 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
                     </button>
                   )}
                 </div>
+
+                <div className="w-full md:w-[280px]">
+                  <select
+                    value={selectedBatchDuplicatorId}
+                    onChange={(e) => setSelectedBatchDuplicatorId(e.target.value)}
+                    disabled={batchStatus !== 'copying'}
+                    className="w-full h-full bg-[#111113] border border-[#2A2A2E] rounded-xl px-3 py-3 text-xs text-white focus:ring-1 focus:ring-blue-500 font-mono disabled:opacity-40"
+                  >
+                    {duplicators.length === 0 ? (
+                      <option value="">No Duplicators Available</option>
+                    ) : (
+                      duplicators.map(dup => {
+                        const slotStates = Array.isArray(dup.slots_status) ? dup.slots_status : [];
+                        const functionalCount = slotStates.filter(Boolean).length;
+                        return (
+                          <option key={dup.id} value={dup.id}>
+                            {dup.name} ({functionalCount}/{dup.slots_total} slots)
+                          </option>
+                        );
+                      })
+                    )}
+                  </select>
+                </div>
+
                 <button
                   type="submit"
                   className="px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-mono font-bold text-xs rounded-xl flex items-center gap-1.5 transition uppercase cursor-pointer"
@@ -703,101 +681,6 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
 
               <div className="text-[10px] text-slate-500 leading-normal flex items-start gap-1 justify-between">
                 <span>💡 Compatible with standard USB/Bluetooth barcode guns. Focuses automatically.</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-6 space-y-4">
-            {/* 4. DEMO SIMULATOR STICKERS */}
-            <div className="bg-[#111113]/80 border border-[#2A2A2E] rounded-xl p-4 space-y-3 h-full flex flex-col justify-between">
-              <div className="flex items-center justify-between border-b border-[#2A2A2E]/55 pb-2">
-                <span className="text-[10px] font-mono font-extrabold text-[#3B82F6] uppercase tracking-wider flex items-center gap-1.5">
-                  <Cpu className="h-3.5 w-3.5 text-blue-400" />
-                  🖥️ Barcode Simulation Laser Trigger
-                </span>
-                <span className="text-[9px] text-slate-500 font-mono">Click to simulate physical scan</span>
-              </div>
-              
-              <div className="space-y-1">
-                <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider block">💾 Drive QR Codes</span>
-                <div className="flex flex-wrap gap-2 pt-1 max-h-[110px] overflow-y-auto">
-                  {disks.map((d) => {
-                    const isScannedCurrentSession = scannedDisks.some(s => s.disk.id === d.id);
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => {
-                          const foundDisk = disks.find(x => x.id === d.id);
-                          if (foundDisk) {
-                            if (isInstantScan) {
-                              handleUpdateStatus(foundDisk.id, batchStatus, batchStatus === 'copying' && selectedBatchDuplicatorId ? { duplicator_id: selectedBatchDuplicatorId } : {});
-                              setScannedDisks(prev => [
-                                {
-                                  disk: foundDisk,
-                                  status: 'success',
-                                  message: `Instant updated -> ${batchStatus.toUpperCase()}`
-                                },
-                                ...prev
-                              ]);
-                            } else {
-                              const alreadyQueued = scannedDisks.some(item => item.disk.id === foundDisk.id);
-                              if (alreadyQueued) {
-                                setScannedDisks(prev => [
-                                  { disk: foundDisk, status: 'warning', message: 'Already in active update queue.' },
-                                  ...prev
-                                ]);
-                              } else {
-                                setScannedDisks(prev => [
-                                  { disk: foundDisk, status: 'success', message: 'Queued for batch committal.' },
-                                  ...prev
-                                ]);
-                              }
-                            }
-                          }
-                        }}
-                        className={`px-2 py-1 text-[10px] font-mono border rounded hover:border-blue-450 hover:bg-blue-955/20 transition cursor-pointer flex items-center gap-1 select-none ${
-                          isScannedCurrentSession
-                            ? 'border-emerald-850 bg-emerald-950/15 text-emerald-450'
-                            : 'border-[#2A2A2E] bg-[#0E0E10] text-slate-400'
-                        }`}
-                      >
-                        <span className="font-extrabold uppercase bg-slate-900 border border-[#2A2A2E] px-0.5 rounded text-[7px]">|||</span>
-                        <span>{d.id}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="border-t border-[#2A2A2E]/40 pt-2.5">
-                <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider block mb-1.5">🔌 Duplicator QR Codes</span>
-                {duplicators.length === 0 ? (
-                  <span className="text-[9.5px] font-mono text-slate-500 italic block">No duplicators configured. (Setup in Admin Portal)</span>
-                ) : (
-                  <div className="flex flex-wrap gap-2 max-h-[80px] overflow-y-auto">
-                    {duplicators.map((dup) => (
-                      <button
-                        key={dup.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedBatchDuplicatorId(dup.id);
-                          setBatchStatus('copying');
-                          setUiSuccess(`Duplicator "${dup.name}" auto-selected. Target pipeline switched to COPY IN PROGRESS.`);
-                          setScanInput('');
-                        }}
-                        className={`px-2 py-1 text-[10px] font-mono border rounded hover:border-emerald-500 hover:bg-emerald-955/20 transition cursor-pointer flex items-center gap-1 select-none ${
-                          selectedBatchDuplicatorId === dup.id && batchStatus === 'copying'
-                            ? 'border-emerald-500 bg-emerald-955/15 text-emerald-400'
-                            : 'border-[#2A2A2E] bg-[#0E0E10] text-slate-400'
-                        }`}
-                      >
-                        <span className="font-extrabold uppercase bg-slate-900 border border-[#2A2A2E] px-0.5 rounded text-[7px] text-emerald-500">QR</span>
-                        <span>{dup.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -828,7 +711,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
           <div className="max-h-[140px] overflow-y-auto divide-y divide-[#2A2A2E]">
             {scannedDisks.length === 0 ? (
               <div className="p-5 text-center text-slate-600 text-[11px] font-mono">
-                Awaiting initial drive codes. Scan sticker or select simulation triggers to register drive tracks.
+                Awaiting initial drive codes. Scan physical tags to register drive tracks.
               </div>
             ) : (
               scannedDisks.map((item, idx) => (
@@ -1106,7 +989,7 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
                           id: `DS-${l}`,
                           name: `Source ${l}`,
                           description: 'External Allocation',
-                          required_specs: { interface: 'SATA 3', size_options: l === 'B' || l === 'C' ? ['6TB', '8TB', '12TB'] : ['8TB', '12TB'] }
+                          required_specs: { interface: 'SATA 3', size_options: [l === 'B' || l === 'C' ? '6TB' : '8TB'] }
                         }))).map(source => (
                           <option key={source.id} value={source.id}>{source.name}</option>
                         ))}
@@ -1129,10 +1012,11 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
 
                 {lookupForm.source_requested_id && (() => {
                   const matchingSource = datasources.find(src => src.id === lookupForm.source_requested_id);
-                  const isCompatible = matchingSource ? matchingSource.required_specs?.size_options?.includes(lookupForm.hd_size) : true;
+                  const isCompatible = meetsSourceMinimum(matchingSource, lookupForm.hd_size);
+                  const minTB = getSourceMinSizeTB(matchingSource);
                   return (
                     <div className={`rounded-lg border p-3 text-[11px] ${isCompatible ? 'border-emerald-900/40 bg-emerald-950/20 text-emerald-300' : 'border-amber-900/40 bg-amber-950/20 text-amber-300'}`}>
-                      {isCompatible ? 'Selected source is compatible with the current capacity.' : `Selected source requires ${matchingSource?.required_specs?.size_options?.join('/') || 'a compatible capacity'} for this drive.`}
+                      {isCompatible ? 'Drive meets the source minimum size requirement.' : `Selected source requires a minimum drive size of ${Number.isNaN(minTB) ? 'the configured minimum' : `${minTB}TB`}.`}
                     </div>
                   );
                 })()}
@@ -1185,182 +1069,133 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-mono uppercase text-slate-500 font-bold">Rows</label>
+            <select
+              value={deskPageSizeOption}
+              onChange={(e) => {
+                setDeskPageSizeOption(e.target.value as '10' | '50' | '100' | '200' | 'all');
+                setDeskPage(1);
+              }}
+                    className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2.5 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-11"
+            >
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+              <option value="all">All</option>
+            </select>
+          </div>
         </div>
 
-        {/* Responsive Grid list of active drives */}
+        {/* Admin-style processing inventory table */}
         {(() => {
-          const totalPages = Math.max(1, Math.ceil(filteredDisks.length / deskPageSize));
+          const pageSize = deskPageSizeOption === 'all' ? (filteredDisks.length || 1) : Number(deskPageSizeOption);
+          const totalPages = Math.max(1, Math.ceil(filteredDisks.length / pageSize));
           const currentPage = Math.min(deskPage, totalPages);
-          const startIndex = (currentPage - 1) * deskPageSize;
-          const endIndex = startIndex + deskPageSize;
+          const startIndex = (currentPage - 1) * pageSize;
+          const endIndex = startIndex + pageSize;
           const pagedDisks = filteredDisks.slice(startIndex, endIndex);
 
           return (
             <div>
               <div className="flex justify-between items-center mb-3 text-[10px] font-mono text-slate-500 uppercase tracking-wider">
                 <span>Showing {filteredDisks.length === 0 ? 0 : startIndex + 1} - {Math.min(endIndex, filteredDisks.length)} of {filteredDisks.length} matched (Total: {disks.length})</span>
-                {filteredDisks.length > deskPageSize && (
+                {filteredDisks.length > pageSize && (
                   <span>Page {currentPage} of {totalPages}</span>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="max-h-[70vh] overflow-auto border border-[#2A2A2E] rounded-xl bg-[#111113]">
                 {filteredDisks.length === 0 ? (
-                  <div className="col-span-full text-center text-slate-600 font-mono py-16 text-xs bg-[#111113] rounded-xl border border-[#2A2A2E]/55">
+                  <div className="text-center text-slate-600 font-mono py-16 text-xs">
                     No matching disks found.
                   </div>
                 ) : (
-                  pagedDisks.map((d) => {
-                    const isDiskSimulated = copyingDiskId === d.id;
-                    return (
-                      <div
-                        key={d.id}
-                        className={`bg-[#111113] border rounded-xl p-4 flex flex-col justify-between hover:border-slate-700 transition ${
-                          isDiskSimulated ? 'border-blue-900/50 bg-blue-955/5 shadow-inner' : 'border-[#2A2A2E]/60'
-                        }`}
-                      >
-                        {/* Card Header: Identifier, serial and active status badge */}
-                        <div className="flex justify-between items-start gap-2 mb-3.5">
-                          <div className="flex items-center gap-2">
-                            <div className={`p-1.5 rounded-lg shrink-0 ${
-                              d.status === 'completed' ? 'bg-emerald-950/40 text-emerald-450' :
-                              d.status === 'copying' ? 'bg-blue-955/45 text-blue-400 animate-pulse' :
-                              d.status === 'failed' ? 'bg-rose-955/45 text-rose-500' :
-                              d.status === 'picked_up' ? 'bg-indigo-955/45 text-indigo-400' :
-                              'bg-slate-900 border border-[#2A2A2E]/50 text-slate-500'
-                            }`}>
-                              <HardDrive className="h-4 w-4" />
-                            </div>
-                            <div>
-                              <div className="font-mono font-bold text-xs text-blue-400 leading-tight">{d.id}</div>
-                              <div className="text-[9px] font-mono text-slate-500 leading-none mt-0.5">S/N: {d.hd_serial}</div>
-                            </div>
-                          </div>
+                  <table className="min-w-full text-xs text-left">
+                    <thead className="sticky top-0 z-20 bg-[#0E0E10] border-b border-[#2A2A2E] text-[10px] font-mono uppercase font-black tracking-wider text-slate-400">
+                      <tr>
+                        <th className="py-4 px-4">Drive ID</th>
+                        <th className="py-4 px-4">Serial</th>
+                        <th className="py-4 px-4">Manufacturer</th>
+                        <th className="py-4 px-4">Model</th>
+                        <th className="py-4 px-4">Size</th>
+                        <th className="py-4 px-4">Speed</th>
+                        <th className="py-4 px-4">Requested Source</th>
+                        <th className="py-4 px-4">Status</th>
+                        <th className="py-4 px-4">Location</th>
+                        <th className="py-4 px-4">Bypass</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2A2A2E]">
+                      {pagedDisks.map((d) => {
+                        const location = (() => {
+                          if (d.status === 'copying') {
+                            const dup = duplicators.find(dupItem => dupItem.id === d.duplicator_id);
+                            return dup ? dup.name : (d.duplicator_id || 'Duplicator Station');
+                          }
+                          switch (d.status) {
+                            case 'received': return 'Accepted Bin';
+                            case 'completed': return 'Complete Bin';
+                            case 'failed': return 'Failed Bin';
+                            case 'picked_up': return 'Returned';
+                            default: return 'Unknown';
+                          }
+                        })();
 
-                          <div className="text-right">
-                            <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[8px] font-extrabold font-mono tracking-widest border leading-none uppercase ${
-                              d.status === 'completed' ? 'bg-emerald-955/35 text-emerald-400 border-emerald-900/40' :
-                              d.status === 'copying' ? 'bg-blue-955/35 text-blue-400 border-blue-900/40' :
-                              d.status === 'failed' ? 'bg-rose-955/35 text-rose-500 border-rose-905' :
-                              d.status === 'picked_up' ? 'bg-indigo-955/35 text-indigo-400 border-indigo-905' :
-                              'bg-slate-950/40 text-slate-400 border-[#2A2A2E]'
-                            }`}>
-                              {d.status === 'copying' && isDiskSimulated ? 'VERIFYING...' : d.status.replace('_', ' ')}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Card Content: Specs */}
-                        <div className="mb-4 text-xs space-y-1">
-                          <div className="font-bold text-slate-200 truncate">{d.hd_manufacturer}</div>
-                          <div className="text-slate-400 text-[11px] font-mono truncate">{d.hd_model}</div>
-                          <div className="text-[10px] text-slate-500 flex items-center gap-1.5 pt-1 uppercase font-mono mb-2">
-                            <span>{d.hd_size}</span>
-                            <span>&bull;</span>
-                            <span>{d.hd_speed}</span>
-                          </div>
-
-                          <div className="pt-2 border-t border-[#2A2A2E]/40 flex items-center justify-between text-[11px] font-sans">
-                            <span className="text-slate-500 font-mono text-[9px] uppercase font-bold">Location:</span>
-                            <span className="font-semibold text-slate-300">
-                              {(() => {
-                                if (d.status === 'copying') {
-                                  const dup = duplicators.find(dupItem => dupItem.id === d.duplicator_id);
-                                  return dup ? dup.name : (d.duplicator_id || 'Duplicator Station');
-                                }
-                                switch (d.status) {
-                                  case 'received': return 'Accepted Bin';
-                                  case 'completed': return 'Complete Bin';
-                                  case 'failed': return 'Failed Bin';
-                                  case 'picked_up': return 'Returned';
-                                  default: return 'Unknown';
-                                }
-                              })()}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Built-in live progress bar for simulator */}
-                        {isDiskSimulated && copyProgress !== null && (
-                          <div className="mb-4 bg-[#0E0E10] border border-[#2A2A2E] p-2.5 rounded-lg space-y-2">
-                            <div className="flex justify-between items-center text-[9px] font-mono">
-                              <span className="text-blue-400 font-extrabold tracking-tight animate-pulse">DUPLICATING...</span>
-                              <span className="text-white font-bold">{copyProgress}%</span>
-                            </div>
-                            <div className="w-full bg-[#16161A] h-2 rounded-full overflow-hidden border border-[#28282D]">
-                              <div 
-                                className="bg-blue-500 h-full rounded-full transition-all duration-300 shadow shadow-blue-500"
-                                style={{ width: `${copyProgress}%` }}
-                              ></div>
-                            </div>
-                            <div className="flex justify-between text-[8px] font-mono text-slate-500">
-                              <button 
-                                onClick={cancelSimulation}
-                                className="text-rose-455 hover:text-rose-400 cursor-pointer text-slate-400 transition"
+                        return (
+                          <tr key={d.id} className="hover:bg-[#0E0E10]/80 transition">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-200">{d.id}</td>
+                            <td className="py-3.5 px-4 font-mono text-[11px] text-slate-300">{d.hd_serial}</td>
+                            <td className="py-3.5 px-4 font-semibold text-white">{d.hd_manufacturer}</td>
+                            <td className="py-3.5 px-4 text-slate-300 max-w-[220px] truncate" title={d.hd_model}>{d.hd_model}</td>
+                            <td className="py-3.5 px-4"><span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-300 px-1.5 py-0.5 rounded font-bold">{d.hd_size}</span></td>
+                            <td className="py-3.5 px-4"><span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-400 px-1.5 py-0.5 rounded">{d.hd_speed}</span></td>
+                            <td className="py-3.5 px-4 font-mono text-[11px] text-blue-400">{d.source_requested_id || 'Unassigned'}</td>
+                            <td className="py-3.5 px-4">
+                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-extrabold font-mono tracking-widest border leading-none uppercase ${
+                                d.status === 'completed' ? 'bg-emerald-955/35 text-emerald-400 border-emerald-900/40' :
+                                d.status === 'copying' ? 'bg-blue-955/35 text-blue-400 border-blue-900/40' :
+                                d.status === 'failed' ? 'bg-rose-955/35 text-rose-500 border-rose-905' :
+                                d.status === 'picked_up' ? 'bg-indigo-955/35 text-indigo-400 border-indigo-905' :
+                                'bg-slate-950/40 text-slate-400 border-[#2A2A2E]'
+                              }`}>
+                                {d.status.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-200">{location}</td>
+                            <td className="py-3.5 px-4">
+                              <select
+                                value={d.status}
+                                onChange={(e) => {
+                                  const targetVal = e.target.value as Disk['status'];
+                                  if (targetVal === 'copying') {
+                                    openDuplicatorSelection(d.id);
+                                  } else {
+                                    handleUpdateStatus(d.id, targetVal);
+                                    setUiSuccess(`Manually updated drive ${d.id} status to ${targetVal.toUpperCase()}.`);
+                                  }
+                                }}
+                                className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-[11px] text-slate-300 focus:outline-none min-h-11"
                               >
-                                [ Abort ]
-                              </button>
-                              <span>{simulationSpeed === 50 ? 'FAST' : 'NORMAL'}</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Card Action Controls */}
-                        <div className="border-t border-[#2A2A2E]/50 pt-3.5 space-y-2">
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              onClick={() => triggerSimulationRun(d.id)}
-                              disabled={d.status === 'completed' || d.status === 'picked_up' || isDiskSimulated}
-                              className="py-1.5 px-2 bg-blue-600/10 hover:bg-blue-600 border border-blue-900/30 text-blue-400 hover:text-white disabled:opacity-30 disabled:hover:bg-blue-600/10 disabled:hover:text-blue-400 rounded-lg text-[10px] font-bold font-mono transition flex items-center justify-center gap-1 cursor-pointer"
-                              title="Run block-level copier on drive"
-                            >
-                              <Play className="h-3 w-3" />
-                              <span>Run Copier</span>
-                            </button>
-
-                            <button
-                              onClick={() => setPrintedTicketDisk(d)}
-                              className="py-1.5 px-2 bg-[#0E0E10] border border-[#2A2A2E] hover:border-slate-500 rounded-lg text-slate-400 hover:text-white text-[10px] font-bold font-mono transition flex items-center justify-center gap-1 cursor-pointer"
-                              title="Print dispatch ticket and labels"
-                            >
-                              <Printer className="h-3 w-3" />
-                              <span>Print Label</span>
-                            </button>
-                          </div>
-
-                          {/* Integrated bypass dropdown selector */}
-                          <div className="flex items-center justify-between gap-1 text-[10px] bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-2 py-1.5">
-                            <span className="text-slate-550 font-mono uppercase font-bold text-[8.5px] tracking-tight shrink-0">Bypass state:</span>
-                            <select
-                              value={d.status}
-                              disabled={isDiskSimulated}
-                              onChange={(e) => {
-                                const targetVal = e.target.value as Disk['status'];
-                                if (targetVal === 'copying') {
-                                  openDuplicatorSelection(d.id, false);
-                                } else {
-                                  handleUpdateStatus(d.id, targetVal);
-                                  setUiSuccess(`Manually updated drive ${d.id} status to ${targetVal.toUpperCase()}.`);
-                                }
-                              }}
-                              className="bg-transparent text-slate-350 hover:text-white focus:outline-none cursor-pointer font-mono font-bold uppercase text-[9.5px] py-0.5"
-                            >
-                              <option value="received" className="bg-[#0E0E10] text-slate-300">1. Received</option>
-                              <option value="copying" className="bg-[#0E0E10] text-blue-405">2. Copying</option>
-                              <option value="completed" className="bg-[#0E0E10] text-emerald-405">3. Completed</option>
-                              <option value="failed" className="bg-[#0E0E10] text-rose-405">4. Failed</option>
-                              <option value="picked_up" className="bg-[#0E0E10] text-indigo-405">5. Picked Up</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+                                <option value="received">1. Received</option>
+                                <option value="copying">2. Copying</option>
+                                <option value="completed">3. Completed</option>
+                                <option value="failed">4. Failed</option>
+                                <option value="picked_up">5. Picked Up</option>
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 )}
               </div>
 
               {/* Touchscreen-Optimized Pagination controls */}
-              {totalPages > 1 && (
+              {totalPages > 1 && deskPageSizeOption !== 'all' && (
                 <div className="flex items-center justify-between border-t border-[#2A2A2E]/60 pt-6 mt-8 flex-wrap gap-4">
                   <button
                     type="button"
@@ -1408,103 +1243,6 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
       </div>
     )}
 
-      {/* PRINT PREVIEW / TICKET TAG DIALOG Overlay */}
-      {printedTicketDisk && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#16161A] rounded-xl shadow-2xl overflow-hidden max-w-lg w-full border border-slate-700/50 flex flex-col">
-            
-            <div className="border-b border-[#2A2A2E] p-4 bg-slate-900/60 text-center relative">
-              <span className="text-[10px] text-emerald-400 border border-emerald-900/40 rounded px-1.5 py-0.5 uppercase tracking-wider font-extrabold font-mono">DDV DISK DISPATCHED</span>
-              <h4 className="font-bold text-lg block mt-1.5 font-sans tracking-tight text-white">Physical Asset Tag Label</h4>
-              <button 
-                onClick={() => setPrintedTicketDisk(null)}
-                className="absolute top-3.5 right-3.5 text-xs text-slate-400 hover:text-slate-200 font-bold hover:bg-[#2A2A2E] px-2 py-1 rounded"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-6 bg-[#0E0E10] flex items-center justify-center">
-              {/* MINIMIZED PHYSICAL ASSET TAG - U.S. DOLLAR BILL SIZE & FORM FACTOR */}
-              <div className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto animate-fade-in">
-                <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
-                
-                {/* RIGHT JUSTIFIED DRIVE ID ABSOLUTE POSITIONED ABOVE IMAGES */}
-                <div className="absolute top-1.5 right-2.5 text-right">
-                  <span className="text-[8px] text-slate-400 tracking-wider font-extrabold block leading-none uppercase">PHYSICAL ASSET TAG</span>
-                  <span className="text-xs sm:text-sm font-black text-slate-900 block mt-0.5 tracking-tight leading-none">{printedTicketDisk.id}</span>
-                </div>
-                
-                {/* LEFT COLUMN - REQUIRED DATA */}
-                <div className="flex flex-col justify-center text-left flex-1 min-w-0 pr-1 pt-6 pb-6 relative h-full">
-                  <div className="space-y-1 my-auto text-[9.5px] text-slate-700">
-                    <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                      <span className="shrink-0 text-slate-500 font-bold">SOURCE:</span>
-                      <span className="font-black text-blue-600">{printedTicketDisk.source_requested_id}</span>
-                    </div>
-                    <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                      <span className="shrink-0 text-slate-500 font-bold">DRIVE S/N:</span>
-                      <span className="font-black text-slate-800">{printedTicketDisk.hd_serial || 'PENDING'}</span>
-                    </div>
-                    <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                      <span className="shrink-0 text-slate-500 font-bold">ACCEPTED:</span>
-                      <span className="font-black text-slate-800">
-                        {printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <span className="absolute bottom-0 left-0 text-[7.5px] text-slate-500 font-sans leading-tight border-t border-slate-200 pt-1.5 w-full block uppercase font-bold tracking-tight">
-                    AFFIX SECURELY TO PHYSICAL DRIVE
-                  </span>
-                </div>
-
-                {/* RIGHT COLUMN - THREE BLOCKS (15% REDUCED: 68px x 68px) VERTICALLY CENTERED */}
-                <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
-                  {/* 1. Drive Image */}
-                  <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                    {printedTicketDisk.hd_image ? (
-                      <img
-                        src={printedTicketDisk.hd_image}
-                        alt="Physical drive screenshot"
-                        referrerPolicy="no-referrer"
-                        className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5"
-                      />
-                    ) : (
-                      <div className="w-[68px] h-[68px] bg-slate-100 border border-slate-200 rounded flex flex-col items-center justify-center text-[7px] text-slate-400 text-center leading-tight">
-                        NO IMAGE
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 2. Drive Source Letter (6x size, bold, same height as image: 68px) */}
-                  <div className="flex items-center justify-center bg-blue-600 text-white font-black text-[46px] leading-none rounded-lg w-[68px] h-[68px] shrink-0 shadow border border-blue-700 select-none">
-                    {printedTicketDisk.source_requested_id ? String(printedTicketDisk.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
-                  </div>
-
-                  {/* 3. QR Code */}
-                  <div className="flex items-center justify-center bg-white p-1.5 border border-slate-300 rounded-lg shrink-0 w-[68px] h-[68px] shadow-sm">
-                    <QRCodeSVG value={printedTicketDisk.id} size={54} level="M" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-[#111113] p-3 text-center border-t border-[#2A2A2E] flex gap-2">
-              <button
-                onClick={() => {
-                  setPrintedTicketDisk(null);
-                  setUiSuccess('Duplicator label printed and dispatched to physical drive tray.');
-                }}
-                className="flex-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 py-2 rounded-lg transition"
-              >
-                Mock Physical Print
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* DUPLICATOR SELECT MODAL */}
       {duplicatorSelectFor && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1540,7 +1278,8 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
                     <option value="">No duplicator hardware configured. (Setup in Admin Portal)</option>
                   ) : (
                     duplicators.map(dup => {
-                      const functionalCount = dup.slots_status.filter(Boolean).length;
+                      const slotStates = Array.isArray(dup.slots_status) ? dup.slots_status : [];
+                      const functionalCount = slotStates.filter(Boolean).length;
                       return (
                         <option key={dup.id} value={dup.id}>
                           {dup.name} ({dup.manufacturer}) — {functionalCount}/{dup.slots_total} slots working

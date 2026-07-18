@@ -27,10 +27,10 @@ export default function QATestingCenter({
   triggerVisualPing,
   onRefreshAll
 }: QATestingCenterProps) {
-  const [qaActiveTab, setQaActiveTab] = useState<'volunteer' | 'processing' | 'kiosk' | 'admin' | 'automation'>('volunteer');
+  const [qaActiveTab, setQaActiveTab] = useState<'admin' | 'automation'>('admin');
   const [consoleLogs, setConsoleLogs] = useState<string[]>([
     '[QA SYSTEM] Interactive Testing Environment initialized.',
-    '[QA SYSTEM] Select a portal tab above to view manual checklists or trigger simulators.'
+    '[QA SYSTEM] Select a tab above to view admin checklists or run automation.'
   ]);
   const [isAutomating, setIsAutomating] = useState(false);
   const [checkedSteps, setCheckedSteps] = useState<Record<string, boolean>>({});
@@ -86,12 +86,10 @@ export default function QATestingCenter({
   };
 
   // Pre-fill manual logins for testing
-  const triggerAutoLogin = async (role: 'admin' | 'volunteer' | 'processing') => {
+  const triggerAutoLogin = async (role: 'admin') => {
     addLog(`Simulating operator login handshake for role: ${role.toUpperCase()}...`);
     const credentials = {
-      admin: { username: 'admin', password: 'admin123' },
-      volunteer: { username: 'volunteer', password: 'vol123' },
-      processing: { username: 'processing', password: 'proc123' }
+      admin: { username: 'admin', password: 'admin123' }
     };
     
     const cred = credentials[role];
@@ -106,7 +104,7 @@ export default function QATestingCenter({
         const userObj = { username: data.user.username, role: data.user.role, name: data.user.name };
         setCurrentUser(userObj);
         localStorage.setItem('ddv_master_session', JSON.stringify(userObj));
-        setActiveTab(role === 'admin' ? 'admin' : role === 'volunteer' ? 'volunteer' : 'processing');
+        setActiveTab('admin');
         addLog(`SUCCESS: Authorized as ${data.user.name} (${data.user.role}). Portal view updated.`);
         triggerVisualPing(`QA simulated login: ${data.user.name}`);
         if (onRefreshAll) onRefreshAll();
@@ -273,28 +271,6 @@ export default function QATestingCenter({
   };
 
   const manualSteps = {
-    volunteer: [
-      { id: 'V1', title: 'Verify Volunteer Authentication', desc: 'Login as "volunteer" with password "vol123" and confirm header displays "Volunteer Operator".' },
-      { id: 'V2', title: 'Start Camera Feed & Fallback', desc: 'Click "Start Camera Feed". If blocked/unavailable, confirm OCR dropzone or camera fallback renders beautifully.' },
-      { id: 'V3', title: 'Mock Label Scan (OCR Input)', desc: 'Upload or simulate a hard drive sticker scan. Confirm brand, model, and serial are filled in automatically.' },
-      { id: 'V4', title: 'Select Target Datasource', desc: 'Ensure selectable sources (Source A-E) dynamically adjust guidelines based on physical capacity specs.' },
-      { id: 'V5', title: 'Verify Receipt Formatting', desc: 'Check that very long Disk IDs do not spill out of the ticket borders and wrapping works properly.' },
-      { id: 'V6', title: 'Simulate Physical Printer Output', desc: 'Click "Print Labels" and confirm the print-simulation success popup appears without blocking alerts.' }
-    ],
-    processing: [
-      { id: 'P1', title: 'Verify Processing Authentication', desc: 'Login as "processing" with password "proc123" and load copying workspace.' },
-      { id: 'P2', title: 'Locate Target Intake Disk', desc: 'Use search bar to filter by Disk ID or S/N. Confirm target card focuses.' },
-      { id: 'P3', title: 'Initiate Copying State', desc: 'Click "Start Copying Protocol" and verify status transitions to yellow "COPYING" immediately.' },
-      { id: 'P4', title: 'Verify Replication Broadcast Banner', desc: 'Check that global master pinger flashes: "PUSH REPLICATION EVENT" on status change.' },
-      { id: 'P5', title: 'Test Progress bar adjusters', desc: 'Tweak simulation speed slider. Confirm percentage progress updates smoothly.' },
-      { id: 'P6', title: 'Bitwise Checksum Outcomes', desc: 'Test completed transitions (Expected Success) and hardware sector failure transitions (Expected Failure).' }
-    ],
-    kiosk: [
-      { id: 'K1', title: 'Public Kiosk Unauthenticated Entry', desc: 'Verify that Kiosk Terminal works instantly without any login screen restrictions.' },
-      { id: 'K2', title: 'Disk Lookup Timeline Query', desc: 'Scan/Enter a registered Disk ID. Confirm live replication status timeline renders in chronological order.' },
-      { id: 'K3', title: 'Check Non-existent Warnings', desc: 'Type "VAL-FAKE" and confirm elegant red warning appears without raising a console/server crash.' },
-      { id: 'K4', title: 'Generate Kiosk Status Receipt', desc: 'Click "Print Replicated Receipt" and verify the U.S. dollar-bill layout is sized appropriately.' }
-    ],
     admin: [
       { id: 'A1', title: 'Test Admin Route Blockers', desc: 'Log in as volunteer and attempt to open Admin view. Verify "Interface Locked" HUD restrictions block access.' },
       { id: 'A2', title: 'Test central Datasource CRUD', desc: 'Create, edit, and delete datasources. Ensure details persist to backend db.json.' },
@@ -332,30 +308,6 @@ export default function QATestingCenter({
 
       {/* CORE QA TABS */}
       <div className="flex bg-[#0E0E10] border-b border-[#2A2A2E] p-1 text-xs font-mono font-bold shrink-0">
-        <button
-          onClick={() => setQaActiveTab('volunteer')}
-          className={`flex-1 py-2 text-center rounded transition-colors ${
-            qaActiveTab === 'volunteer' ? 'bg-[#1C1C24] text-white border-b border-blue-500' : 'text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          Intake
-        </button>
-        <button
-          onClick={() => setQaActiveTab('processing')}
-          className={`flex-1 py-2 text-center rounded transition-colors ${
-            qaActiveTab === 'processing' ? 'bg-[#1C1C24] text-white border-b border-blue-500' : 'text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          Processing
-        </button>
-        <button
-          onClick={() => setQaActiveTab('kiosk')}
-          className={`flex-1 py-2 text-center rounded transition-colors ${
-            qaActiveTab === 'kiosk' ? 'bg-[#1C1C24] text-white border-b border-blue-500' : 'text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          Kiosk
-        </button>
         <button
           onClick={() => setQaActiveTab('admin')}
           className={`flex-1 py-2 text-center rounded transition-colors ${
@@ -430,94 +382,13 @@ export default function QATestingCenter({
             {/* FAST PORTAL ACCELERATOR / HELPER ACTIONS */}
             <div className="bg-[#16161A] border border-[#2A2A2E] p-3 rounded-xl space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-mono uppercase font-black text-slate-500 tracking-wider">Simulated QA Assist Actions</span>
+                <span className="text-[10px] font-mono uppercase font-black text-slate-500 tracking-wider">QA Assist Actions</span>
                 <span className="text-[9px] font-mono uppercase font-bold text-blue-500 tracking-widest leading-none bg-blue-950/40 px-1.5 py-0.5 rounded">
                   {qaActiveTab.toUpperCase()}
                 </span>
               </div>
               
               <div className="grid grid-cols-2 gap-2 text-[10px] font-bold uppercase font-mono">
-                {qaActiveTab === 'volunteer' && (
-                  <>
-                    <button
-                      onClick={() => triggerAutoLogin('volunteer')}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>⚡ Log In Volunteer</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Sets user session to Volunteer Ops</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActiveTab('volunteer');
-                        addLog('Intake Workspace loaded. Please fill out the intake registration.');
-                      }}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>🖥️ View Intake View</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Switches primary app layout</span>
-                    </button>
-                  </>
-                )}
-
-                {qaActiveTab === 'processing' && (
-                  <>
-                    <button
-                      onClick={() => triggerAutoLogin('processing')}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>🛠️ Log In Tech Desk</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Sets user session to Processing Desk</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActiveTab('processing');
-                        addLog('Processing Workspace loaded. Inspect disk copying grids.');
-                      }}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>⚙️ View Copier Desk</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Switches primary app layout</span>
-                    </button>
-                  </>
-                )}
-
-                {qaActiveTab === 'kiosk' && (
-                  <>
-                    <button
-                      onClick={() => {
-                        // Logout first to ensure public kiosk state
-                        setCurrentUser(null);
-                        localStorage.removeItem('ddv_master_session');
-                        setActiveTab('kiosk');
-                        addLog('Public Kiosk Workspace loaded. Replicated read-only replica status lookups.');
-                      }}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>🏪 Load Public Kiosk</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Bypasses authentication limits</span>
-                    </button>
-                    <button
-                      onClick={async () => {
-                        try {
-                          addLog('Testing Kiosk read-only replication response times...');
-                          const t0 = performance.now();
-                          const res = await fetch('/api/disks');
-                          const t1 = performance.now();
-                          if (res.ok) {
-                            addLog(`SUCCESS: Replicated status database resolved in ${(t1-t0).toFixed(1)}ms.`);
-                          }
-                        } catch (err) {
-                          addLog(`ERROR: Replication look up timed out.`);
-                        }
-                      }}
-                      className="p-2 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg text-slate-300 hover:text-white hover:border-blue-500 transition text-left flex flex-col gap-1 cursor-pointer"
-                    >
-                      <span>🔄 Ping Replica Latency</span>
-                      <span className="text-[8px] text-slate-500 lowercase normal-case font-normal font-sans">Pings SQLite master replica</span>
-                    </button>
-                  </>
-                )}
-
                 {qaActiveTab === 'admin' && (
                   <>
                     <button

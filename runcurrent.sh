@@ -5,7 +5,7 @@ pip3 install django django-unfold django-guardian qrcode
 cd ~/ddv
 git fetch
 if command -v npm >/dev/null 2>&1; then
-	cd ddv-drive-tracker
+	cd /workspaces/ddv/ddv-drive-tracker
 	npm install
 	npm run build
 	cd ..
@@ -15,5 +15,6 @@ fi
 python3 manage.py makemigrations
 python3 manage.py migrate
 python3 manage.py migrate --database=replica
-python3 manage.py runserver
+python3 manage.py runserver &
+echo "---Server Running---  run 'fg' and send a <CTRL>-C to stop the server."
 

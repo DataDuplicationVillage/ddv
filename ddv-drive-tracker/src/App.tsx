@@ -10,10 +10,45 @@ import ProcessingDesk from './components/ProcessingDesk';
 import QATestingCenter from './components/QATestingCenter';
 import { UserRole } from './types';
 
+class PortalErrorBoundary extends React.Component<
+  { title: string; children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { title: string; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Unknown runtime error' };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Portal runtime error:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-[#16161A] border border-rose-900/40 rounded-xl p-6 max-w-2xl mx-auto text-left shadow-md my-8 space-y-3">
+          <h3 className="text-sm font-bold text-rose-300">{this.props.title} failed to render</h3>
+          <p className="text-xs text-slate-300">A runtime exception was caught before the page could render. Reload the page to retry.</p>
+          <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg p-3 text-[11px] font-mono text-rose-300 break-words">
+            {this.state.message}
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
   // Switcher representing the four client-facing environments requested
   // 'admin' | 'volunteer' | 'processing' | 'kiosk'
-  const [activeTab, setActiveTabTab] = useState<'admin' | 'volunteer' | 'processing' | 'kiosk'>('admin');
+  const [activeTab, setActiveTabTab] = useState<'admin' | 'volunteer' | 'processing' | 'kiosk'>('kiosk');
+  const [showAuthWindow, setShowAuthWindow] = useState(false);
   
   // Tracking global master session auth
   const [currentUser, setCurrentUser] = useState<{ username: string; name: string; role: UserRole } | null>(null);
@@ -79,6 +114,7 @@ export default function App() {
         }
         setUsernameInput('');
         setPasswordInput('');
+        setShowAuthWindow(false);
         triggerVisualPing(`User ${data.user.username} successfully checked in.`);
       } else {
         setAuthError(data.message || 'Invalid static database password.');
@@ -93,6 +129,8 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('ddv_master_session');
+    setActiveTabTab('kiosk');
+    setShowAuthWindow(false);
   };
 
   // Callback whenever any table undergoes CRUD changes which pushes to the replicated read-only kiosk DB
@@ -111,7 +149,19 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col lg:flex-row items-center justify-between gap-4">
           
           {/* Logo & title */}
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (!currentUser) {
+                setActiveTabTab('admin');
+                setShowAuthWindow(true);
+                return;
+              }
+              setActiveTabTab('admin');
+            }}
+            className="flex items-center gap-3 text-left cursor-pointer"
+            title="Return to operator sign-in"
+          >
             <div className="h-9 w-9 rounded-lg bg-blue-600 flex items-center justify-center shadow-lg">
               <Server className="h-4.5 w-4.5 text-white" />
             </div>
@@ -126,9 +176,10 @@ export default function App() {
               </div>
               <p className="text-[10px] text-slate-500 font-medium font-sans">Django Schema compliance, Barcode labels scanner & Replicated Status Terminal</p>
             </div>
-          </div>
+          </button>
 
-          {/* Quad Interface Switching Tabs */}
+          {/* Quad Interface Switching Tabs (authenticated sessions only) */}
+          {currentUser ? (
           <div className="flex flex-wrap items-center bg-[#0E0E10] p-1 rounded-xl border border-[#2A2A2E] gap-1 self-stretch lg:self-auto">
             
             {(!currentUser || currentUser.role === 'admin') && (
@@ -183,19 +234,35 @@ export default function App() {
               Status Kiosk
             </button>
           </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setShowAuthWindow(false);
+                setActiveTabTab('kiosk');
+              }}
+              className="hidden lg:flex items-center gap-1.5 font-mono text-[10px] text-emerald-450 bg-emerald-950/15 border border-emerald-900/40 px-2.5 py-1 rounded-full self-stretch lg:self-auto justify-center cursor-pointer hover:bg-emerald-950/30 transition"
+              title="Return to Public Kiosk"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>PUBLIC KIOSK MODE</span>
+            </button>
+          )}
 
-          {/* QA TESTING CENTER TRIGGER BUTTON */}
-          <button
-            onClick={() => setIsQAPanelOpen(prev => !prev)}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer select-none self-stretch sm:self-auto justify-center ${
-              isQAPanelOpen 
-                ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/15 font-black' 
-                : 'bg-[#1C1C24] text-amber-500 border-amber-500/25 hover:bg-amber-950/20 hover:border-amber-500/40'
-            }`}
-          >
-            <ClipboardCheck className="h-4 w-4" />
-            <span>QA Testing Center</span>
-          </button>
+          {/* QA TESTING CENTER TRIGGER BUTTON (Admin only) */}
+          {currentUser?.role === 'admin' && (
+            <button
+              onClick={() => setIsQAPanelOpen(prev => !prev)}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-xl border transition-all cursor-pointer select-none self-stretch sm:self-auto justify-center ${
+                isQAPanelOpen 
+                  ? 'bg-amber-600 border-amber-500 text-white shadow-lg shadow-amber-900/15 font-black' 
+                  : 'bg-[#1C1C24] text-amber-500 border-amber-500/25 hover:bg-amber-950/20 hover:border-amber-500/40'
+              }`}
+            >
+              <ClipboardCheck className="h-4 w-4" />
+              <span>QA Testing Center</span>
+            </button>
+          )}
 
           {/* ACTIVE LOGGED USER HUD */}
           {currentUser && (
@@ -239,7 +306,9 @@ export default function App() {
       {/* CORE CONTENT SWITCHER WITH AUTHORIZATION FILTERS */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         
-        {activeTab === 'kiosk' ? (
+        {!currentUser && !showAuthWindow ? (
+          <KioskTerminal />
+        ) : activeTab === 'kiosk' && !showAuthWindow ? (
           /* Public unauthenticated status lookup kiosk */
           <KioskTerminal />
         ) : !currentUser ? (
@@ -300,44 +369,8 @@ export default function App() {
                 </button>
               </form>
 
-              {/* SIMULATION FAST CREDENTIAL PRESETS */}
-              <div className="bg-[#0E0E10] p-4 rounded-xl border border-[#2A2A2E] space-y-2.5">
-                <span className="block text-[10px] font-mono uppercase font-black text-slate-550 leading-none">Simulate operator credentials:</span>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsernameInput('admin');
-                      setPasswordInput('admin123');
-                    }}
-                    className="p-2.5 bg-[#16161A] hover:bg-slate-800 border border-[#2A2A2E] rounded-lg transition-colors font-semibold text-slate-300 text-left flex flex-col cursor-pointer"
-                  >
-                    <span className="text-white text-[11px] font-black block">👑 Admin Terminal</span>
-                    <span className="text-[9px] text-slate-500 font-mono mt-0.5">user: admin / pass: admin123</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsernameInput('volunteer');
-                      setPasswordInput('vol123');
-                    }}
-                    className="p-2.5 bg-[#16161A] hover:bg-slate-800 border border-[#2A2A2E] rounded-lg transition-colors font-semibold text-slate-300 text-left flex flex-col cursor-pointer"
-                  >
-                    <span className="text-white text-[11px] font-black block">⚡ Volunteer Desk</span>
-                    <span className="text-[9px] text-slate-500 font-mono mt-0.5">user: volunteer / pass: vol123</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsernameInput('processing');
-                      setPasswordInput('proc123');
-                    }}
-                    className="p-2.5 bg-[#16161A] hover:bg-slate-800 border border-[#2A2A2E] rounded-lg transition-colors font-semibold text-slate-300 text-left flex flex-col cursor-pointer"
-                  >
-                    <span className="text-white text-[11px] font-black block">🛠️ Processing Desk</span>
-                    <span className="text-[9px] text-slate-500 font-mono mt-0.5">user: processing / pass: proc123</span>
-                  </button>
-                </div>
+              <div className="bg-[#0E0E10] p-4 rounded-xl border border-[#2A2A2E] text-[11px] text-slate-500">
+                Enter assigned operator credentials to access this interface.
               </div>
             </div>
           </div>
@@ -410,11 +443,13 @@ export default function App() {
              {activeTab === 'processing' && (
               currentUser.role === 'admin' || currentUser.role === 'processing' ? (
                 /* Processing dashboard to move drives */
-                <ProcessingDesk 
-                  onTableUpdateNotification={(table, action, id) => {
-                    triggerVisualPing(`Copier action registered on \`${table}\` [ID: ${id}]`);
-                  }}
-                />
+                  <PortalErrorBoundary title="Processing Portal">
+                    <ProcessingDesk 
+                      onTableUpdateNotification={(table, action, id) => {
+                        triggerVisualPing(`Copier action registered on \`${table}\` [ID: ${id}]`);
+                      }}
+                    />
+                  </PortalErrorBoundary>
               ) : (
                 <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-8 max-w-lg mx-auto text-center shadow-md my-12 font-sans space-y-3">
                   <ShieldAlert className="h-10 w-10 text-rose-500 mx-auto" />
@@ -441,15 +476,17 @@ export default function App() {
         </div>
       </footer>
 
-      <QATestingCenter
-        isOpen={isQAPanelOpen}
-        onClose={() => setIsQAPanelOpen(false)}
-        activeTab={activeTab}
-        setActiveTab={setActiveTabTab}
-        currentUser={currentUser}
-        setCurrentUser={setCurrentUser}
-        triggerVisualPing={triggerVisualPing}
-      />
+      {currentUser?.role === 'admin' && (
+        <QATestingCenter
+          isOpen={isQAPanelOpen}
+          onClose={() => setIsQAPanelOpen(false)}
+          activeTab={activeTab}
+          setActiveTab={setActiveTabTab}
+          currentUser={currentUser}
+          setCurrentUser={setCurrentUser}
+          triggerVisualPing={triggerVisualPing}
+        />
+      )}
 
     </div>
   );

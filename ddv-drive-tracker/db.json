@@ -3,27 +3,30 @@
     {
       "username": "admin",
       "role": "admin",
-      "name": "System Administrator"
+      "name": "System Administrator",
+      "password": "admin123",
+      "isLocked": false
     },
     {
       "username": "volunteer",
       "role": "volunteer",
-      "name": "Volunteer Operator"
+      "name": "Volunteer Operator",
+      "password": "vol123",
+      "isLocked": false
     },
     {
       "username": "processing",
       "role": "processing",
-      "name": "Processing Operator"
+      "name": "Processing Operator",
+      "password": "proc123",
+      "isLocked": false
     },
     {
       "username": "scott",
       "role": "user",
-      "name": "Scott Martin"
-    },
-    {
-      "username": "flora",
-      "role": "user",
-      "name": "Flora Vance"
+      "name": "Scott Martin",
+      "password": "user123",
+      "isLocked": false
     }
   ],
   "datasources": [
@@ -243,5 +246,527 @@
     }
   ],
   "replication_logs": [],
-  "disk_status_logs": []
+  "disk_status_logs": [],
+  "duplicators": [
+    {
+      "id": "dup-01",
+      "name": "Dup-Alpha 01",
+      "manufacturer": "Systor",
+      "slots_total": 10,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2021
+    },
+    {
+      "id": "dup-02",
+      "name": "Dup-Alpha 02",
+      "manufacturer": "Systor",
+      "slots_total": 10,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "year_in_service": 2021
+    },
+    {
+      "id": "dup-03",
+      "name": "Dup-Beta 01",
+      "manufacturer": "Acard",
+      "slots_total": 7,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-04",
+      "name": "Dup-Beta 02",
+      "manufacturer": "Acard",
+      "slots_total": 7,
+      "slots_status": [
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-05",
+      "name": "Dup-Gamma 01",
+      "manufacturer": "Spartan",
+      "slots_total": 15,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2023
+    },
+    {
+      "id": "dup-06",
+      "name": "Dup-Gamma 02",
+      "manufacturer": "Spartan",
+      "slots_total": 15,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2023
+    },
+    {
+      "id": "dup-07",
+      "name": "Dup-Delta 01",
+      "manufacturer": "Wytron",
+      "slots_total": 5,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2020
+    },
+    {
+      "id": "dup-08",
+      "name": "Dup-Delta 02",
+      "manufacturer": "Wytron",
+      "slots_total": 5,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "year_in_service": 2020
+    },
+    {
+      "id": "dup-09",
+      "name": "Tower-01",
+      "manufacturer": "Systor",
+      "slots_total": 11,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2024
+    },
+    {
+      "id": "dup-10",
+      "name": "Tower-02",
+      "manufacturer": "Systor",
+      "slots_total": 11,
+      "slots_status": [
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2024
+    },
+    {
+      "id": "dup-11",
+      "name": "Tower-03",
+      "manufacturer": "Systor",
+      "slots_total": 11,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2024
+    },
+    {
+      "id": "dup-12",
+      "name": "SuperDup-A",
+      "manufacturer": "Acard",
+      "slots_total": 20,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2025
+    },
+    {
+      "id": "dup-13",
+      "name": "SuperDup-B",
+      "manufacturer": "Acard",
+      "slots_total": 20,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2025
+    },
+    {
+      "id": "dup-14",
+      "name": "Dup-Epsilon 01",
+      "manufacturer": "Spartan",
+      "slots_total": 8,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-15",
+      "name": "Dup-Epsilon 02",
+      "manufacturer": "Spartan",
+      "slots_total": 8,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-16",
+      "name": "Dup-Zeta 01",
+      "manufacturer": "Wytron",
+      "slots_total": 12,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2023
+    },
+    {
+      "id": "dup-17",
+      "name": "Dup-Zeta 02",
+      "manufacturer": "Wytron",
+      "slots_total": 12,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "year_in_service": 2023
+    },
+    {
+      "id": "dup-18",
+      "name": "Acard-Tower-01",
+      "manufacturer": "Acard",
+      "slots_total": 10,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2021
+    },
+    {
+      "id": "dup-19",
+      "name": "Acard-Tower-02",
+      "manufacturer": "Acard",
+      "slots_total": 10,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true
+      ],
+      "year_in_service": 2021
+    },
+    {
+      "id": "dup-20",
+      "name": "Spartan-Pro-1",
+      "manufacturer": "Spartan",
+      "slots_total": 16,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2024
+    },
+    {
+      "id": "dup-21",
+      "name": "Spartan-Pro-2",
+      "manufacturer": "Spartan",
+      "slots_total": 16,
+      "slots_status": [
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2024
+    },
+    {
+      "id": "dup-22",
+      "name": "MiniDup-1",
+      "manufacturer": "Systor",
+      "slots_total": 4,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-23",
+      "name": "MiniDup-2",
+      "manufacturer": "Systor",
+      "slots_total": 4,
+      "slots_status": [
+        true,
+        true,
+        false,
+        true
+      ],
+      "year_in_service": 2022
+    },
+    {
+      "id": "dup-24",
+      "name": "Wytron-Heavy-1",
+      "manufacturer": "Wytron",
+      "slots_total": 24,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2025
+    },
+    {
+      "id": "dup-25",
+      "name": "Wytron-Heavy-2",
+      "manufacturer": "Wytron",
+      "slots_total": 24,
+      "slots_status": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "year_in_service": 2025
+    }
+  ]
 }

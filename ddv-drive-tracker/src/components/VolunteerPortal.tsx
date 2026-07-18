@@ -6,7 +6,7 @@ import {
 import { Disk, DataSource, UserRole, Duplicator } from '../types';
 
 interface VolunteerPortalProps {
-  currentUser: { username: string; name: string; role: UserRole; diskhaver_id?: string } | null;
+  currentUser: { username: string; name: string; role: UserRole; owner_id?: string } | null;
   onLogout: () => void;
   onTableUpdateNotification: (tableName: string, action: string, recordId: string) => void;
 }
@@ -16,6 +16,23 @@ export default function VolunteerPortal({
   onLogout,
   onTableUpdateNotification
 }: VolunteerPortalProps) {
+  const parseDriveSizeTB = (sizeValue: string) => {
+    const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
+    return match ? Number(match[1]) : NaN;
+  };
+
+  const getSourceMinSizeTB = (source: DataSource | undefined) => {
+    if (!source?.required_specs?.size_options?.length) return NaN;
+    return parseDriveSizeTB(source.required_specs.size_options[0]);
+  };
+
+  const meetsSourceMinimum = (source: DataSource | undefined, driveSize: string) => {
+    const minTB = getSourceMinSizeTB(source);
+    const driveTB = parseDriveSizeTB(driveSize);
+    if (Number.isNaN(minTB) || Number.isNaN(driveTB)) return true;
+    return driveTB >= minTB;
+  };
+
   // Database states
   const [disks, setDisks] = useState<Disk[]>([]);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
@@ -124,15 +141,12 @@ export default function VolunteerPortal({
     fetchAllData();
   }, []);
 
-  // Reset selected source if it becomes incompatible with the current drive size
+  // Reset selected source if the drive falls below the source minimum size
   useEffect(() => {
     if (diskForm.source_requested_id) {
       const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
-      if (selectedSource) {
-        const isCompatible = selectedSource.required_specs?.size_options?.includes(diskForm.hd_size);
-        if (!isCompatible) {
-          setDiskForm(prev => ({ ...prev, source_requested_id: '' }));
-        }
+      if (selectedSource && !meetsSourceMinimum(selectedSource, diskForm.hd_size)) {
+        setDiskForm(prev => ({ ...prev, source_requested_id: '' }));
       }
     }
   }, [diskForm.hd_size, datasources]);
@@ -516,6 +530,13 @@ export default function VolunteerPortal({
   };
 
   const handlePOSIntakeSubmit = async () => {
+        const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
+        if (selectedSource && !meetsSourceMinimum(selectedSource, diskForm.hd_size)) {
+          const minTB = getSourceMinSizeTB(selectedSource);
+          alert(`Selected source requires a minimum drive size of ${Number.isNaN(minTB) ? 'the configured minimum' : `${minTB}TB`}.`);
+          return;
+        }
+
     if (!diskForm.id || !diskForm.hd_serial || !diskForm.source_requested_id) {
       alert("Missing required fields for Registration.");
       return;
@@ -869,7 +890,7 @@ export default function VolunteerPortal({
                             id: `DS-${l}`,
                             name: `Source ${l}`,
                             description: 'External Allocation',
-                            required_specs: { interface: 'SATA 3', size_options: l === 'B' || l === 'C' ? ['6TB', '8TB', '12TB'] : ['8TB', '12TB'] }
+                            required_specs: { interface: 'SATA 3', size_options: [l === 'B' || l === 'C' ? '6TB' : '8TB'] }
                           }))).map(source => (
                             <option key={source.id} value={source.id}>{source.name}</option>
                           ))}
@@ -892,10 +913,11 @@ export default function VolunteerPortal({
 
                   {lookupForm.source_requested_id && (() => {
                     const matchingSource = datasources.find(src => src.id === lookupForm.source_requested_id);
-                    const isCompatible = matchingSource ? matchingSource.required_specs?.size_options?.includes(lookupForm.hd_size) : true;
+                    const isCompatible = meetsSourceMinimum(matchingSource, lookupForm.hd_size);
+                    const minTB = getSourceMinSizeTB(matchingSource);
                     return (
                       <div className={`rounded-lg border p-3 text-[11px] ${isCompatible ? 'border-emerald-900/40 bg-emerald-950/20 text-emerald-300' : 'border-amber-900/40 bg-amber-950/20 text-amber-300'}`}>
-                        {isCompatible ? 'Selected source is compatible with the current capacity.' : `Selected source requires ${matchingSource?.required_specs?.size_options?.join('/') || 'a compatible capacity'} for this drive.`}
+                        {isCompatible ? 'Drive meets the source minimum size requirement.' : `Selected source requires a minimum drive size of ${Number.isNaN(minTB) ? 'the configured minimum' : `${minTB}TB`}.`}
                       </div>
                     );
                   })()}
@@ -933,7 +955,18 @@ export default function VolunteerPortal({
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
                   <h4 className="text-sm font-bold text-slate-200">Step 1: Parse Hard Drive Label Frame</h4>
-                  <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">AUTO-SCANNER</span>
+                  <div className="flex items-center gap-2">
+                    {(scanImageBase64 || scanResult || diskForm.hd_serial || diskForm.hd_model) && (
+                      <button
+                        type="button"
+                        onClick={handleResetIntakeForm}
+                        className="px-3 py-1.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-300 font-bold text-[10px] rounded-lg cursor-pointer"
+                      >
+                        Start Over
+                      </button>
+                    )}
+                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">AUTO-SCANNER</span>
+                  </div>
                 </div>
 
                 <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-5 text-center space-y-4">
@@ -1192,7 +1225,16 @@ export default function VolunteerPortal({
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
                   <h4 className="text-sm font-bold text-slate-200">Step 2: Assign Source & Client (Verify Output Tag & Ticket)</h4>
-                  <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">INTAKE FLOWCHART REQUISITE</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleResetIntakeForm}
+                      className="px-3 py-1.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-300 font-bold text-[10px] rounded-lg cursor-pointer"
+                    >
+                      Start Over
+                    </button>
+                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">INTAKE FLOWCHART REQUISITE</span>
+                  </div>
                 </div>
 
                 <div className="bg-[#0E0E10] p-4 rounded-xl border border-[#2A2A2E] flex justify-between items-center text-xs">
@@ -1218,12 +1260,13 @@ export default function VolunteerPortal({
                         id: `DS-${l}`,
                         name: `Source ${l}`,
                         description: 'External Allocation',
-                        required_specs: { interface: 'SATA 3', size_options: l === 'B' || l === 'C' ? ['6TB', '8TB', '12TB'] : ['8TB', '12TB'] }
+                        required_specs: { interface: 'SATA 3', size_options: [l === 'B' || l === 'C' ? '6TB' : '8TB'] }
                       }));
 
                       return list.map(source => {
                         const isSelected = diskForm.source_requested_id === source.id;
-                        const isCompatible = source.required_specs?.size_options?.includes(diskForm.hd_size);
+                        const isCompatible = meetsSourceMinimum(source, diskForm.hd_size);
+                        const minTB = getSourceMinSizeTB(source);
                         
                         return (
                           <button
@@ -1256,7 +1299,7 @@ export default function VolunteerPortal({
                                 <span className="text-[9px] text-slate-500 font-mono mt-0.5 block">Compatible</span>
                               ) : (
                                 <span className="text-[8px] text-rose-450 font-bold font-mono mt-0.5 block leading-tight">
-                                  Requires {source.required_specs?.size_options?.join('/')}
+                                  Min {Number.isNaN(minTB) ? '?' : minTB}TB required
                                 </span>
                               )}
                             </div>

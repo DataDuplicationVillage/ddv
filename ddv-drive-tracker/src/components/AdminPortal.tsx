@@ -11,7 +11,7 @@ import {
 import { Disk, DataSource, UserRole, User, Duplicator } from '../types';
 
 interface AdminPortalProps {
-  currentUser: { username: string; name: string; role: UserRole; diskhaver_id?: string } | null;
+  currentUser: { username: string; name: string; role: UserRole; owner_id?: string } | null;
   onLogout: () => void;
   onTableUpdateNotification: (tableName: string, action: string, recordId: string) => void;
 }
@@ -21,6 +21,23 @@ export default function AdminPortal({
   onLogout,
   onTableUpdateNotification
 }: AdminPortalProps) {
+  const parseDriveSizeTB = (sizeValue: string) => {
+    const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
+    return match ? Number(match[1]) : NaN;
+  };
+
+  const getSourceMinSizeTB = (source: DataSource | undefined) => {
+    if (!source?.required_specs?.size_options?.length) return NaN;
+    return parseDriveSizeTB(source.required_specs.size_options[0]);
+  };
+
+  const meetsSourceMinimum = (source: DataSource | undefined, driveSize: string) => {
+    const minTB = getSourceMinSizeTB(source);
+    const driveTB = parseDriveSizeTB(driveSize);
+    if (Number.isNaN(minTB) || Number.isNaN(driveTB)) return true;
+    return driveTB >= minTB;
+  };
+
   // Database states
   const [disks, setDisks] = useState<Disk[]>([]);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
@@ -43,7 +60,9 @@ export default function AdminPortal({
   const [diskSearchQuery, setDiskSearchQuery] = useState('');
   const [diskStatusFilter, setDiskStatusFilter] = useState<string>('all');
   const [diskPage, setDiskPage] = useState(1);
-  const diskPageSize = 12;
+  const [diskPageSizeOption, setDiskPageSizeOption] = useState<'10' | '50' | '100' | '200' | 'all'>('10');
+  const [diskSortColumn, setDiskSortColumn] = useState<'id' | 'hd_serial' | 'hd_manufacturer' | 'hd_model' | 'hd_size' | 'hd_speed' | 'source_requested_id' | 'status' | 'location'>('id');
+  const [diskSortDirection, setDiskSortDirection] = useState<'asc' | 'desc'>('asc');
 
   // Seeding States
   const [isLoadTesting, setIsLoadTesting] = useState(false);
@@ -76,8 +95,12 @@ export default function AdminPortal({
     name: '',
     description: '',
     interface: 'SATA 3',
-    size_options: '8TB, 6TB'
+    size_options: '8TB'
   });
+
+  const [reportComponent, setReportComponent] = useState<'all' | 'manufacturer' | 'speed' | 'size' | 'source' | 'model' | 'status' | 'duplicator'>('all');
+  const [reportValue, setReportValue] = useState<string>('all');
+  const [reportDriveId, setReportDriveId] = useState<string>('');
 
   // User Management State
   const [usersList, setUsersList] = useState<User[]>([]);
@@ -142,11 +165,14 @@ export default function AdminPortal({
   };
 
   const handleDeleteUser = async (username: string) => {
-    if (username.toLowerCase().trim() === 'admin') {
+    const normalizedUsername = username.toLowerCase().trim();
+    const activeUsername = currentUser?.username?.toLowerCase().trim() || '';
+
+    if (normalizedUsername === 'admin') {
       alert('The primary system admin account cannot be deleted.');
       return;
     }
-    if (currentUser && currentUser.username.toLowerCase().trim() === username.toLowerCase().trim()) {
+    if (activeUsername && activeUsername === normalizedUsername) {
       alert('You cannot delete your own active administrator account.');
       return;
     }
@@ -155,8 +181,28 @@ export default function AdminPortal({
     }
 
     try {
-      const res = await fetch(`/api/admin/users/${username}`, { method: 'DELETE' });
+      const encodedUsername = encodeURIComponent(username.trim());
+      let res = await fetch(`/api/admin/users/${encodedUsername}`, {
+        method: 'DELETE',
+        headers: {
+          'x-actor-username': currentUser?.username || ''
+        }
+      });
+
+      // Fallback route for servers that only support payload-style deletion
+      if (res.status === 404 || res.status === 405) {
+        res = await fetch('/api/admin/users/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-actor-username': currentUser?.username || ''
+          },
+          body: JSON.stringify({ username: username.trim() })
+        });
+      }
+
       if (res.ok) {
+        setUsersList(prev => prev.filter(user => user.username.toLowerCase().trim() !== normalizedUsername));
         fetchAllData();
       } else {
         const data = await res.json();
@@ -171,17 +217,17 @@ export default function AdminPortal({
   const fetchAllData = async () => {
     setIsLoading(true);
     try {
-      const [disksRes, sourcesRes, usersRes, duplicatorsRes] = await Promise.all([
-        fetch('/api/disks'),
-        fetch('/api/datasources'),
-        fetch('/api/admin/users'),
-        fetch('/api/duplicators')
+      const [disksRes, sourcesRes, usersRes, duplicatorsRes] = await Promise.allSettled([
+        fetch('/api/disks', { cache: 'no-store' }),
+        fetch('/api/datasources', { cache: 'no-store' }),
+        fetch('/api/admin/users', { cache: 'no-store' }),
+        fetch('/api/duplicators', { cache: 'no-store' })
       ]);
 
-      if (disksRes.ok) setDisks(await disksRes.json());
-      if (sourcesRes.ok) setDatasources(await sourcesRes.json());
-      if (usersRes.ok) setUsersList(await usersRes.json());
-      if (duplicatorsRes.ok) setDuplicators(await duplicatorsRes.json());
+      if (disksRes.status === 'fulfilled' && disksRes.value.ok) setDisks(await disksRes.value.json());
+      if (sourcesRes.status === 'fulfilled' && sourcesRes.value.ok) setDatasources(await sourcesRes.value.json());
+      if (usersRes.status === 'fulfilled' && usersRes.value.ok) setUsersList(await usersRes.value.json());
+      if (duplicatorsRes.status === 'fulfilled' && duplicatorsRes.value.ok) setDuplicators(await duplicatorsRes.value.json());
     } catch (err) {
       console.error('Failed to query tables:', err);
     } finally {
@@ -334,9 +380,9 @@ export default function AdminPortal({
 
     const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
     if (!isEdit && selectedSource) {
-      const sizeOptions = selectedSource.required_specs.size_options;
-      if (!sizeOptions.includes(diskForm.hd_size)) {
-        alert(`Invalid Specs! DataSource "${selectedSource.name}" requires ${sizeOptions.join('/')} drives. Selected size is ${diskForm.hd_size}.`);
+      const minTB = getSourceMinSizeTB(selectedSource);
+      if (!meetsSourceMinimum(selectedSource, diskForm.hd_size)) {
+        alert(`Invalid Specs! DataSource "${selectedSource.name}" requires minimum ${Number.isNaN(minTB) ? 'configured' : `${minTB}TB`} drives. Selected size is ${diskForm.hd_size}.`);
         return;
       }
     }
@@ -385,7 +431,7 @@ export default function AdminPortal({
         description: sourceForm.description,
         required_specs: {
           interface: sourceForm.interface,
-          size_options: sourceForm.size_options.split(',').map(s => s.trim())
+          size_options: [sourceForm.size_options.trim()]
         }
       };
 
@@ -464,7 +510,7 @@ export default function AdminPortal({
         name: r.name,
         description: r.description,
         interface: r.required_specs.interface,
-        size_options: r.required_specs.size_options.join(', ')
+        size_options: r.required_specs.size_options[0] || '8TB'
       });
     } else if (tabName === 'duplicators') {
       const r = record as Duplicator;
@@ -499,7 +545,7 @@ export default function AdminPortal({
         pickup_time: '',
       });
     } else if (tabName === 'datasources') {
-      setSourceForm({ name: '', description: '', interface: 'SATA 3', size_options: '8TB, 6TB' });
+      setSourceForm({ name: '', description: '', interface: 'SATA 3', size_options: '8TB' });
     } else if (tabName === 'duplicators') {
       setDuplicatorForm({
         name: '',
@@ -525,49 +571,115 @@ export default function AdminPortal({
     return matchesSearch && matchesStatus;
   });
 
-  // Pagination for Disks
-  const totalPages = Math.max(1, Math.ceil(filteredDisks.length / diskPageSize));
+  const getDiskLocation = (d: Disk) => {
+    if (d.status === 'copying') {
+      const dup = duplicators.find(dupItem => dupItem.id === d.duplicator_id);
+      return dup ? dup.name : (d.duplicator_id || 'Duplicator Station');
+    }
+    switch (d.status) {
+      case 'received': return 'Accepted Bin';
+      case 'completed': return 'Complete Bin';
+      case 'failed': return 'Failed Bin';
+      case 'picked_up': return 'Returned';
+      default: return 'Unknown';
+    }
+  };
+
+  const getDiskSortValue = (d: Disk, column: typeof diskSortColumn) => {
+    if (column === 'location') return getDiskLocation(d);
+    if (column === 'hd_size') return parseDriveSizeTB(d.hd_size);
+    return (d[column] || '').toString().toLowerCase();
+  };
+
+  const sortedDisks = [...filteredDisks].sort((a, b) => {
+    const aValue = getDiskSortValue(a, diskSortColumn);
+    const bValue = getDiskSortValue(b, diskSortColumn);
+    if (aValue < bValue) return diskSortDirection === 'asc' ? -1 : 1;
+    if (aValue > bValue) return diskSortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const pageSize = diskPageSizeOption === 'all' ? sortedDisks.length || 1 : Number(diskPageSizeOption);
+  const totalPages = Math.max(1, Math.ceil(sortedDisks.length / pageSize));
   const currentPage = Math.min(diskPage, totalPages);
-  const startIndex = (currentPage - 1) * diskPageSize;
-  const pagedDisks = filteredDisks.slice(startIndex, startIndex + diskPageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pagedDisks = sortedDisks.slice(startIndex, startIndex + pageSize);
 
-  // Generate Reports Analytics
+  const toggleDiskSort = (column: typeof diskSortColumn) => {
+    if (diskSortColumn === column) {
+      setDiskSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setDiskSortColumn(column);
+    setDiskSortDirection('asc');
+  };
+
+  const sortIndicator = (column: typeof diskSortColumn) => {
+    if (diskSortColumn !== column) return '⇅';
+    return diskSortDirection === 'asc' ? '↑' : '↓';
+  };
+
+  const getReportComponentValue = (disk: Disk, component: typeof reportComponent) => {
+    switch (component) {
+      case 'manufacturer': return disk.hd_manufacturer || 'Unknown';
+      case 'speed': return disk.hd_speed || 'Unknown';
+      case 'size': return disk.hd_size || 'Unknown';
+      case 'source': return disk.source_requested_id || 'Unknown';
+      case 'model': return disk.hd_model || 'Unknown';
+      case 'status': return disk.status || 'Unknown';
+      case 'duplicator': return disk.duplicator_id || 'Unassigned';
+      default: return 'all';
+    }
+  };
+
+  const availableReportValues = Array.from(
+    new Set(disks.map(d => getReportComponentValue(d, reportComponent)).filter(Boolean))
+  ).sort();
+
+  const filteredReportDisks = disks.filter(disk => {
+    const driveMatch = !reportDriveId.trim() || disk.id.toLowerCase().includes(reportDriveId.trim().toLowerCase());
+    if (!driveMatch) return false;
+    if (reportComponent === 'all' || reportValue === 'all') return true;
+    return getReportComponentValue(disk, reportComponent) === reportValue;
+  });
+
+  // Generate Reports Analytics in 4-hour increments
   const getReportsData = () => {
-    const dateMap: Record<string, { accepted: number; copying: number; completed: number; returned: number; failed: number }> = {};
-    
-    disks.forEach(disk => {
-      const formatDate = (isoStr: string | null | undefined) => {
-        if (!isoStr) return null;
-        try {
-          const d = new Date(isoStr);
-          if (isNaN(d.getTime())) return null;
-          return d.toISOString().split('T')[0]; // "YYYY-MM-DD"
-        } catch {
-          return null;
-        }
-      };
+    const bucketMap: Record<string, { accepted: number; copying: number; completed: number; returned: number; failed: number }> = {};
 
-      const rDate = formatDate(disk.received_time);
-      const sDate = formatDate(disk.copy_start_time);
-      const cDate = formatDate(disk.copy_complete_time);
-      const fDate = formatDate(disk.copy_fail_time);
-      const pDate = formatDate(disk.pickup_time);
+    const toBucketKey = (isoStr: string | null | undefined) => {
+      if (!isoStr) return null;
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return null;
+      const bucketHour = Math.floor(d.getHours() / 4) * 4;
+      const bucket = new Date(d);
+      bucket.setMinutes(0, 0, 0);
+      bucket.setHours(bucketHour);
+      return bucket.toISOString();
+    };
 
-      const touchDate = (dStr: string) => {
-        if (!dateMap[dStr]) {
-          dateMap[dStr] = { accepted: 0, copying: 0, completed: 0, returned: 0, failed: 0 };
-        }
-      };
+    const touchBucket = (bucket: string) => {
+      if (!bucketMap[bucket]) {
+        bucketMap[bucket] = { accepted: 0, copying: 0, completed: 0, returned: 0, failed: 0 };
+      }
+    };
 
-      if (rDate) { touchDate(rDate); dateMap[rDate].accepted += 1; }
-      if (sDate) { touchDate(sDate); dateMap[sDate].copying += 1; }
-      if (cDate) { touchDate(cDate); dateMap[cDate].completed += 1; }
-      if (fDate) { touchDate(fDate); dateMap[fDate].failed += 1; }
-      if (pDate) { touchDate(pDate); dateMap[pDate].returned += 1; }
+    filteredReportDisks.forEach(disk => {
+      const rKey = toBucketKey(disk.received_time);
+      const sKey = toBucketKey(disk.copy_start_time);
+      const cKey = toBucketKey(disk.copy_complete_time);
+      const fKey = toBucketKey(disk.copy_fail_time);
+      const pKey = toBucketKey(disk.pickup_time);
+
+      if (rKey) { touchBucket(rKey); bucketMap[rKey].accepted += 1; }
+      if (sKey) { touchBucket(sKey); bucketMap[sKey].copying += 1; }
+      if (cKey) { touchBucket(cKey); bucketMap[cKey].completed += 1; }
+      if (fKey) { touchBucket(fKey); bucketMap[fKey].failed += 1; }
+      if (pKey) { touchBucket(pKey); bucketMap[pKey].returned += 1; }
     });
 
-    const sortedDates = Object.keys(dateMap).sort();
-    if (sortedDates.length === 0) return [];
+    const sortedKeys = Object.keys(bucketMap).sort();
+    if (sortedKeys.length === 0) return [];
 
     let cumulativeAccepted = 0;
     let cumulativeCopying = 0;
@@ -575,23 +687,20 @@ export default function AdminPortal({
     let cumulativeReturned = 0;
     let cumulativeFailed = 0;
 
-    return sortedDates.map(date => {
-      const dayData = dateMap[date];
-      cumulativeAccepted += dayData.accepted;
-      cumulativeCopying += dayData.copying;
-      cumulativeCompleted += dayData.completed;
-      cumulativeReturned += dayData.returned;
-      cumulativeFailed += dayData.failed;
+    return sortedKeys.map(key => {
+      const bucketData = bucketMap[key];
+      cumulativeAccepted += bucketData.accepted;
+      cumulativeCopying += bucketData.copying;
+      cumulativeCompleted += bucketData.completed;
+      cumulativeReturned += bucketData.returned;
+      cumulativeFailed += bucketData.failed;
 
-      let displayLabel = date;
-      try {
-        const parsed = new Date(date + 'T00:00:00');
-        displayLabel = parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      } catch {}
+      const d = new Date(key);
+      const label = `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${String(d.getHours()).padStart(2, '0')}:00`;
 
       return {
-        date,
-        label: displayLabel,
+        date: key,
+        label,
         "Accepted Drives": cumulativeAccepted,
         "In Progress (Copying)": cumulativeCopying,
         "Completed Duplications": cumulativeCompleted,
@@ -603,10 +712,26 @@ export default function AdminPortal({
 
   const reportsData = getReportsData();
 
+  const timelineDrive = filteredReportDisks.length === 1
+    ? filteredReportDisks[0]
+    : (reportDriveId.trim()
+      ? disks.find(d => d.id.toLowerCase() === reportDriveId.trim().toLowerCase())
+      : null);
+
+  const singleDriveTimeline = timelineDrive
+    ? [
+        { key: 'received', label: 'Accepted', time: timelineDrive.received_time, status: 'received' },
+        { key: 'copying', label: 'Copying Started', time: timelineDrive.copy_start_time, status: 'copying' },
+        { key: 'completed', label: 'Copy Completed', time: timelineDrive.copy_complete_time, status: 'completed' },
+        { key: 'failed', label: 'Copy Failed', time: timelineDrive.copy_fail_time, status: 'failed' },
+        { key: 'picked_up', label: 'Returned', time: timelineDrive.pickup_time, status: 'picked_up' }
+      ]
+    : [];
+
   // Status Distribution Chart Data
   const getStatusDistribution = () => {
     const counts = { received: 0, copying: 0, completed: 0, failed: 0, picked_up: 0 };
-    disks.forEach(d => {
+    filteredReportDisks.forEach(d => {
       if (d.status in counts) {
         counts[d.status as keyof typeof counts] += 1;
       }
@@ -708,6 +833,24 @@ export default function AdminPortal({
               </select>
             </div>
 
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-mono uppercase text-slate-500 font-bold">Rows</label>
+              <select
+                value={diskPageSizeOption}
+                onChange={(e) => {
+                  setDiskPageSizeOption(e.target.value as '10' | '50' | '100' | '200' | 'all');
+                  setDiskPage(1);
+                }}
+                className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2.5 text-sm text-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 min-h-11"
+              >
+                <option value="10">10</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+
             <div className="flex flex-wrap items-center gap-2">
               {/* Load Testing Seeding Selector */}
               <div className="flex items-center bg-[#0E0E10] border border-[#2A2A2E] rounded-lg p-1 text-xs">
@@ -764,17 +907,20 @@ export default function AdminPortal({
           {/* Storage Drives List */}
           {pagedDisks.length > 0 ? (
             <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl overflow-hidden shadow-lg">
-              <div className="overflow-x-auto">
+              <div className="max-h-[70vh] overflow-auto">
                 <table className="w-full border-collapse text-left text-xs text-slate-300">
-                  <thead className="bg-[#0E0E10] border-b border-[#2A2A2E] text-[10px] font-mono uppercase font-black tracking-wider text-slate-400">
+                  <thead className="sticky top-0 z-20 bg-[#0E0E10] border-b border-[#2A2A2E] text-[10px] font-mono uppercase font-black tracking-wider text-slate-400">
                     <tr>
-                      <th className="py-3 px-4">Drive ID / Serial</th>
-                      <th className="py-3 px-4">Hardware Info</th>
-                      <th className="py-3 px-4">Specs</th>
-                      <th className="py-3 px-4">Allocated Dataset</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Location</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('id')}>Drive ID {sortIndicator('id')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('hd_serial')}>Serial {sortIndicator('hd_serial')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('hd_manufacturer')}>Manufacturer {sortIndicator('hd_manufacturer')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('hd_model')}>Model {sortIndicator('hd_model')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('hd_size')}>Size {sortIndicator('hd_size')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('hd_speed')}>Speed {sortIndicator('hd_speed')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('source_requested_id')}>Allocated Dataset {sortIndicator('source_requested_id')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('status')}>Status {sortIndicator('status')}</th>
+                      <th className="py-4 px-4 cursor-pointer select-none" onClick={() => toggleDiskSort('location')}>Location {sortIndicator('location')}</th>
+                      <th className="py-4 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#2A2A2E]/50">
@@ -784,30 +930,25 @@ export default function AdminPortal({
                         <tr key={d.id} className="hover:bg-[#1D1D22]/40 transition-colors">
                           <td className="py-3.5 px-4">
                             <div className="font-mono font-bold text-slate-200">{d.id}</div>
-                            <div className="font-mono text-[10px] text-slate-500 mt-0.5">S/N: {d.hd_serial}</div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <div className="font-mono text-[11px] text-slate-300">{d.hd_serial}</div>
                           </td>
                           <td className="py-3.5 px-4">
                             <div className="font-bold text-white">{d.hd_manufacturer}</div>
-                            <div className="text-slate-400 text-[11px] truncate max-w-[200px]" title={d.hd_model}>
-                              {d.hd_model}
-                            </div>
                           </td>
                           <td className="py-3.5 px-4">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-300 px-1.5 py-0.5 rounded font-bold">
-                                {d.hd_size}
-                              </span>
-                              <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-400 px-1.5 py-0.5 rounded">
-                                {d.hd_speed}
-                              </span>
-                            </div>
+                            <div className="text-slate-300 text-[11px] truncate max-w-[220px]" title={d.hd_model}>{d.hd_model}</div>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-300 px-1.5 py-0.5 rounded font-bold">{d.hd_size}</span>
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className="font-mono text-[10px] bg-slate-900 border border-[#2A2A2E] text-slate-400 px-1.5 py-0.5 rounded">{d.hd_speed}</span>
                           </td>
                           <td className="py-3.5 px-4">
                             {matchedSource ? (
-                              <div>
-                                <div className="font-medium text-slate-300">{matchedSource.name}</div>
-                                <div className="font-mono text-[9px] text-emerald-450">{matchedSource.id}</div>
-                              </div>
+                              <div className="font-medium text-slate-300">{matchedSource.name}</div>
                             ) : (
                               <span className="text-slate-500 font-mono text-[10px]">—</span>
                             )}
@@ -816,7 +957,7 @@ export default function AdminPortal({
                             <select
                               value={d.status}
                               onChange={(e) => handleInlineStatusChange(d.id, e.target.value as any)}
-                              className={`text-[9px] px-2.5 py-1 rounded uppercase font-black font-mono border cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                              className={`text-[10px] px-3 py-2 rounded-lg uppercase font-black font-mono border cursor-pointer focus:outline-none focus:ring-1 focus:ring-emerald-500 min-h-11 ${
                                 d.status === 'completed' ? 'bg-emerald-950/45 text-emerald-400 border-emerald-900/30' :
                                 d.status === 'copying' ? 'bg-blue-950/40 text-blue-400 border-blue-900/30' :
                                 d.status === 'failed' ? 'bg-rose-950/30 text-rose-400 border-rose-900/30' :
@@ -832,32 +973,20 @@ export default function AdminPortal({
                             </select>
                           </td>
                           <td className="py-3.5 px-4 font-sans font-medium text-xs text-slate-200">
-                            {(() => {
-                              if (d.status === 'copying') {
-                                const dup = duplicators.find(dupItem => dupItem.id === d.duplicator_id);
-                                return dup ? dup.name : (d.duplicator_id || 'Duplicator Station');
-                              }
-                              switch (d.status) {
-                                case 'received': return 'Accepted Bin';
-                                case 'completed': return 'Complete Bin';
-                                case 'failed': return 'Failed Bin';
-                                case 'picked_up': return 'Returned';
-                                default: return 'Unknown';
-                              }
-                            })()}
+                            {getDiskLocation(d)}
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex justify-end gap-1.5">
                               <button
                                 onClick={() => openEdit('disks', d)}
-                                className="text-emerald-450 hover:text-emerald-400 p-1.5 hover:bg-emerald-950/20 rounded transition"
+                                className="text-emerald-450 hover:text-emerald-400 p-2.5 hover:bg-emerald-950/20 rounded-lg transition min-h-11 min-w-11"
                                 title="Edit Drive Entry"
                               >
                                 <Edit3 className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDelete('disks', d.id)}
-                                className="text-rose-400 hover:text-rose-300 p-1.5 hover:bg-rose-950/20 rounded transition"
+                                className="text-rose-400 hover:text-rose-300 p-2.5 hover:bg-rose-950/20 rounded-lg transition min-h-11 min-w-11"
                                 title="Delete Record"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -878,22 +1007,22 @@ export default function AdminPortal({
           )}
 
           {/* Pagination Controls */}
-          {totalPages > 1 && (
+          {totalPages > 1 && diskPageSizeOption !== 'all' && (
             <div className="flex items-center justify-center gap-4 mt-6">
               <button
                 disabled={currentPage === 1}
                 onClick={() => setDiskPage(currentPage - 1)}
-                className="px-3.5 py-1.5 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-xs rounded-lg transition text-slate-300 font-bold"
+                className="px-5 py-3 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-sm rounded-xl transition text-slate-300 font-bold min-h-11"
               >
                 Previous
               </button>
               <span className="text-xs text-slate-400 font-mono font-bold">
-                Page {currentPage} of {totalPages} ({filteredDisks.length} total)
+                Page {currentPage} of {totalPages} ({sortedDisks.length} total)
               </span>
               <button
                 disabled={currentPage === totalPages}
                 onClick={() => setDiskPage(currentPage + 1)}
-                className="px-3.5 py-1.5 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-xs rounded-lg transition text-slate-300 font-bold"
+                className="px-5 py-3 bg-[#16161A] hover:bg-[#202025] border border-[#2A2A2E] disabled:opacity-40 text-sm rounded-xl transition text-slate-300 font-bold min-h-11"
               >
                 Next
               </button>
@@ -948,8 +1077,8 @@ export default function AdminPortal({
                     <span className="text-white font-extrabold">{s.required_specs.interface}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Compatible Sizes:</span>
-                    <span className="text-white font-extrabold">{s.required_specs.size_options.join(', ')}</span>
+                    <span>Minimum Drive Size:</span>
+                    <span className="text-white font-extrabold">{s.required_specs.size_options[0] || 'N/A'}</span>
                   </div>
                 </div>
               </div>
@@ -960,12 +1089,79 @@ export default function AdminPortal({
 
       {activeTab === 'reports' && (
         <div className="space-y-6">
+          <div className="bg-[#111113] border border-[#2A2A2E] p-4 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input
+              type="text"
+              value={reportDriveId}
+              onChange={(e) => setReportDriveId(e.target.value)}
+              placeholder="Filter by drive ID timeline"
+              className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+            <select
+              value={reportComponent}
+              onChange={(e) => {
+                const next = e.target.value as typeof reportComponent;
+                setReportComponent(next);
+                setReportValue('all');
+              }}
+              className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value="all">All Components</option>
+              <option value="manufacturer">Manufacturer</option>
+              <option value="speed">Speed</option>
+              <option value="size">Size</option>
+              <option value="source">Source</option>
+              <option value="model">Model</option>
+              <option value="status">Status</option>
+              <option value="duplicator">Duplicator</option>
+            </select>
+            <select
+              value={reportValue}
+              onChange={(e) => setReportValue(e.target.value)}
+              disabled={reportComponent === 'all'}
+              className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
+            >
+              <option value="all">All Values</option>
+              {availableReportValues.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+            <div className="text-[10px] font-mono text-slate-400 flex items-center justify-end">
+              Reporting on {filteredReportDisks.length} drives
+            </div>
+          </div>
+
+          {timelineDrive && (
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4 space-y-3">
+              <div>
+                <h4 className="text-sm font-bold text-white">Drive Timeline: {timelineDrive.id}</h4>
+                <p className="text-[11px] text-slate-400">Processing path for the selected single drive.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                {singleDriveTimeline.map((event) => {
+                  const hasTime = !!event.time;
+                  return (
+                    <div
+                      key={event.key}
+                      className={`rounded-lg border p-3 ${hasTime ? 'border-emerald-900/40 bg-emerald-950/20' : 'border-[#2A2A2E] bg-[#0E0E10]'}`}
+                    >
+                      <div className="text-[10px] uppercase font-mono font-black text-slate-400">{event.label}</div>
+                      <div className={`text-[11px] mt-1 font-mono ${hasTime ? 'text-emerald-300' : 'text-slate-500'}`}>
+                        {hasTime ? new Date(event.time as string).toLocaleString() : 'Not reached'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Dashboard Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
               <div>
                 <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Total Ingested</span>
-                <span className="text-2xl font-black text-white block mt-1">{disks.length}</span>
+                <span className="text-2xl font-black text-white block mt-1">{filteredReportDisks.length}</span>
               </div>
               <div className="h-10 w-10 bg-blue-950/40 border border-blue-900/30 rounded-lg flex items-center justify-center text-blue-400">
                 <HardDrive className="h-5 w-5" />
@@ -976,7 +1172,7 @@ export default function AdminPortal({
               <div>
                 <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">In Duplication Pipe</span>
                 <span className="text-2xl font-black text-white block mt-1">
-                  {disks.filter(d => d.status === 'received' || d.status === 'copying').length}
+                  {filteredReportDisks.filter(d => d.status === 'received' || d.status === 'copying').length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-emerald-950/40 border border-emerald-900/30 rounded-lg flex items-center justify-center text-emerald-400">
@@ -988,7 +1184,7 @@ export default function AdminPortal({
               <div>
                 <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Completed (Not Picked)</span>
                 <span className="text-2xl font-black text-white block mt-1">
-                  {disks.filter(d => d.status === 'completed' || d.status === 'failed').length}
+                  {filteredReportDisks.filter(d => d.status === 'completed' || d.status === 'failed').length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-purple-950/40 border border-purple-900/30 rounded-lg flex items-center justify-center text-purple-400">
@@ -1000,7 +1196,7 @@ export default function AdminPortal({
               <div>
                 <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Returned & Closed</span>
                 <span className="text-2xl font-black text-white block mt-1">
-                  {disks.filter(d => d.status === 'picked_up').length}
+                  {filteredReportDisks.filter(d => d.status === 'picked_up').length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-slate-900/40 border border-[#2A2A2E] rounded-lg flex items-center justify-center text-slate-400">
@@ -1019,7 +1215,7 @@ export default function AdminPortal({
                     <TrendingUp className="h-4 w-4 text-emerald-400" />
                     Replication Cumulative Growth Timeline
                   </h4>
-                  <p className="text-[11px] text-slate-400">Historical sequence of client drives transitioning through the ingestion & copying stages</p>
+                  <p className="text-[11px] text-slate-400">Historical sequence in 4-hour intervals with optional component and drive filters</p>
                 </div>
               </div>
 
@@ -1042,7 +1238,7 @@ export default function AdminPortal({
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2E" />
-                      <XAxis dataKey="label" stroke="#7F7F8F" />
+                      <XAxis dataKey="label" stroke="#7F7F8F" interval="preserveStartEnd" minTickGap={32} />
                       <YAxis stroke="#7F7F8F" />
                       <Tooltip contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
                       <Legend />
@@ -1071,7 +1267,7 @@ export default function AdminPortal({
                 </div>
               </div>
 
-              {disks.length > 0 ? (
+              {filteredReportDisks.length > 0 ? (
                 <div className="h-[320px] w-full text-xs flex flex-col justify-between">
                   <div className="h-[250px]">
                     <ResponsiveContainer width="100%" height="100%">
@@ -1501,7 +1697,7 @@ export default function AdminPortal({
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Compatible sizes (comma sep)</label>
+                      <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Minimum drive size</label>
                       <input
                         type="text"
                         required

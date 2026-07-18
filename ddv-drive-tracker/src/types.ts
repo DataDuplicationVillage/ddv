@@ -21,7 +21,7 @@ export interface DataSource {
   description: string;
   required_specs: {
     interface: string; // e.g., "SATA 3"
-    size_options: string[]; // e.g., ["8TB", "6TB"]
+    size_options: string[]; // First entry is treated as the minimum drive size, e.g. ["8TB"]
   };
 }
 

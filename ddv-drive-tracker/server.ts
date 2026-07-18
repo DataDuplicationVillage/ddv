@@ -31,31 +31,31 @@ function createInitialState(): ServerState {
         id: 'DS-A',
         name: 'Source A',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB', '12TB'] }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       },
       {
         id: 'DS-B',
         name: 'Source B',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['6TB', '8TB', '12TB'] }
+        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
       },
       {
         id: 'DS-C',
         name: 'Source C',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['6TB', '8TB', '12TB'] }
+        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
       },
       {
         id: 'DS-D',
         name: 'Source D',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB', '12TB'] }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       },
       {
         id: 'DS-E',
         name: 'Source E',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB', '12TB'] }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       }
     ],
     disks: [
@@ -454,6 +454,13 @@ app.put('/api/admin/users/:username', (req, res) => {
 // DELETE user (Admin only)
 app.delete('/api/admin/users/:username', (req, res) => {
   const { username } = req.params;
+  const actorUsername = String(req.headers['x-actor-username'] || '').toLowerCase().trim();
+  const targetUsername = username.toLowerCase().trim();
+
+  if (actorUsername && actorUsername === targetUsername) {
+    return res.status(400).json({ error: 'You cannot delete your own active account.' });
+  }
+
   const index = db.users.findIndex(u => u.username.toLowerCase().trim() === username.toLowerCase().trim());
   if (index === -1) return res.status(404).json({ error: 'User ID not found.' });
 
@@ -461,6 +468,30 @@ app.delete('/api/admin/users/:username', (req, res) => {
   if (username.toLowerCase().trim() === 'admin') {
     return res.status(400).json({ error: 'The primary system admin account cannot be deleted.' });
   }
+
+  db.users.splice(index, 1);
+  saveDB(db);
+  res.json({ success: true, message: 'Deleted user record.' });
+});
+
+// DELETE user by payload (Admin-only UX fallback for robust client compatibility)
+app.post('/api/admin/users/delete', (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  if (!username) return res.status(400).json({ error: 'Username is required.' });
+
+  const actorUsername = String(req.headers['x-actor-username'] || '').toLowerCase().trim();
+  const targetUsername = username.toLowerCase().trim();
+
+  if (actorUsername && actorUsername === targetUsername) {
+    return res.status(400).json({ error: 'You cannot delete your own active account.' });
+  }
+
+  if (targetUsername === 'admin') {
+    return res.status(400).json({ error: 'The primary system admin account cannot be deleted.' });
+  }
+
+  const index = db.users.findIndex(u => u.username.toLowerCase().trim() === targetUsername);
+  if (index === -1) return res.status(404).json({ error: 'User ID not found.' });
 
   db.users.splice(index, 1);
   saveDB(db);
@@ -490,7 +521,7 @@ app.post('/api/datasources', (req, res) => {
     id: `DS-${Date.now()}`,
     name,
     description: description || '',
-    required_specs: required_specs || { interface: 'SATA 3', size_options: ['8TB', '6TB'] }
+    required_specs: required_specs || { interface: 'SATA 3', size_options: ['8TB'] }
   };
   
   db.datasources.push(newSource);

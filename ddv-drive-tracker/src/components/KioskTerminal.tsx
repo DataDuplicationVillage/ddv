@@ -1,40 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
-import { 
-  Search, HardDrive, Cpu, CheckCircle, XCircle, Clock, 
-  HelpCircle, Printer, ArrowRight, ShieldCheck, Database, QrCode,
-  ChevronDown, ChevronUp
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Search,
+  HardDrive,
+  Cpu,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Database,
+  QrCode,
+  ChevronDown,
+  ChevronUp,
+  RotateCcw
 } from 'lucide-react';
 import { Disk } from '../types';
 
 export default function KioskTerminal() {
   const [searchId, setSearchId] = useState('');
-  const scannerInputRef = React.useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    // Keep focus locked to the scanner input field for seamless physical scanner input
-    const keepFocus = () => {
-      if (scannerInputRef.current) {
-        scannerInputRef.current.focus();
-      }
-    };
-    
-    keepFocus();
-    const interval = setInterval(keepFocus, 800);
-    return () => clearInterval(interval);
-  }, []);
+  const scannerInputRef = useRef<HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [searched, setSearched] = useState(false);
   const [isRecordsExpanded, setIsRecordsExpanded] = useState(false);
+  const [autoResetSeconds, setAutoResetSeconds] = useState<number | null>(null);
 
-  // Lookup results
   const [diskRecord, setDiskRecord] = useState<Disk | null>(null);
   const [statusLogs, setStatusLogs] = useState<any[]>([]);
 
-  // Thermal ticket print emulation
-  const [printedTicketDisk, setPrintedTicketDisk] = useState<Disk | null>(null);
-  const [printSuccess, setPrintSuccess] = useState(false);
+  useEffect(() => {
+    const keepFocus = () => scannerInputRef.current?.focus();
+    keepFocus();
+    const interval = setInterval(keepFocus, 800);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleResetSearch = () => {
     setSearched(false);
@@ -42,10 +39,36 @@ export default function KioskTerminal() {
     setErrorMsg('');
     setDiskRecord(null);
     setStatusLogs([]);
-    setPrintSuccess(false);
-    setPrintedTicketDisk(null);
+    setAutoResetSeconds(null);
     setIsRecordsExpanded(false);
   };
+
+  const resetProgressPct = autoResetSeconds === null
+    ? 0
+    : Math.max(0, Math.min(100, (autoResetSeconds / 30) * 100));
+
+  useEffect(() => {
+    if (!searched || loading || (!diskRecord && !errorMsg)) {
+      setAutoResetSeconds(null);
+      return;
+    }
+
+    setAutoResetSeconds(30);
+    const timeoutId = setTimeout(() => {
+      handleResetSearch();
+    }, 30000);
+    const countdownId = setInterval(() => {
+      setAutoResetSeconds((prev) => {
+        if (prev === null) return prev;
+        return prev > 0 ? prev - 1 : 0;
+      });
+    }, 1000);
+
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(countdownId);
+    };
+  }, [searched, loading, diskRecord, errorMsg]);
 
   const handleLookup = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -55,52 +78,39 @@ export default function KioskTerminal() {
     setErrorMsg('');
     setSearched(true);
     setDiskRecord(null);
-    setPrintSuccess(false);
-    setPrintedTicketDisk(null);
-    setIsRecordsExpanded(false);
+    setStatusLogs([]);
 
-    // Clean up input prefix if they scan *VAL-01* or similar
     let cleanId = searchId.trim();
-    if (cleanId.toUpperCase().startsWith('VAL-')) {
-      cleanId = cleanId.substring(4);
-    }
-    if (cleanId.startsWith('*') && cleanId.endsWith('*')) {
-      cleanId = cleanId.slice(1, -1);
-    }
-    if (cleanId.toUpperCase().startsWith('VAL-')) {
-      cleanId = cleanId.substring(4);
-    }
+    if (cleanId.toUpperCase().startsWith('VAL-')) cleanId = cleanId.substring(4);
+    if (cleanId.startsWith('*') && cleanId.endsWith('*')) cleanId = cleanId.slice(1, -1);
+    if (cleanId.toUpperCase().startsWith('VAL-')) cleanId = cleanId.substring(4);
 
     try {
-      // 1. Fetch read-only replica cascade for historic diskhavings matching code
       const lookupRes = await fetch(`/api/kiosk/lookup-disk/${cleanId}`);
       if (!lookupRes.ok) {
         throw new Error('Barcode reference not located in replicated vault logs. Visit check-in desk.');
       }
-      
+
       const lookupData = await lookupRes.json();
-      if (lookupData.found) {
-        if (lookupData.status_logs) {
-          setStatusLogs(lookupData.status_logs);
-        }
+      if (lookupData?.status_logs) {
+        setStatusLogs(lookupData.status_logs);
       }
 
-      // 2. Fetch master disks database to join physical specifications
       const disksRes = await fetch('/api/disks');
       if (disksRes.ok) {
         const allDisks: Disk[] = await disksRes.json();
         const targetDiskId = lookupData.disk_id || cleanId;
         const foundDisk = allDisks.find(
-          d => d.id.toLowerCase() === targetDiskId.toLowerCase() ||
-               d.hd_serial.toLowerCase() === targetDiskId.toLowerCase() ||
-               d.id.toLowerCase() === cleanId.toLowerCase() ||
-               d.hd_serial.toLowerCase() === cleanId.toLowerCase()
+          d =>
+            d.id.toLowerCase() === targetDiskId.toLowerCase() ||
+            d.hd_serial.toLowerCase() === targetDiskId.toLowerCase() ||
+            d.id.toLowerCase() === cleanId.toLowerCase() ||
+            d.hd_serial.toLowerCase() === cleanId.toLowerCase()
         );
-        
+
         if (foundDisk) {
           setDiskRecord(foundDisk);
         } else {
-          // Fallback mockup disk based on latest replica log activity to guarantee seamless visual
           setDiskRecord({
             id: targetDiskId.toUpperCase(),
             hd_manufacturer: 'Generic',
@@ -118,38 +128,11 @@ export default function KioskTerminal() {
           });
         }
       }
-
     } catch (err: any) {
       setErrorMsg(err.message || 'Asset sequence mismatch inside read-only disk replication.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const getStepState = (stepNumber: number) => {
-    if (!diskRecord) return 'locked';
-    const status = diskRecord.status;
-
-    if (stepNumber === 1) {
-      return 'completed'; // ALWAYS received if record found
-    }
-    if (stepNumber === 2) {
-      if (status === 'copying') return 'active';
-      if (['completed', 'failed', 'picked_up'].includes(status)) return 'completed';
-      return 'locked';
-    }
-    if (stepNumber === 3) {
-      if (status === 'completed') return 'completed';
-      if (status === 'failed') return 'failed';
-      if (status === 'picked_up') return 'completed';
-      return 'locked';
-    }
-    if (stepNumber === 4) {
-      if (status === 'picked_up') return 'completed';
-      if (status === 'completed') return 'ready';
-      return 'locked';
-    }
-    return 'locked';
   };
 
   const currentStatusMsg = () => {
@@ -160,7 +143,7 @@ export default function KioskTerminal() {
       case 'copying':
         return 'REPLICATION ACTIVE: Performing bitwise integrity transfer to production array.';
       case 'completed':
-        return 'COMPLETED: Duplication success! Safe labels applied. Please proceed to disbursement desk.';
+        return 'COMPLETED: Duplication success. Please proceed to disbursement desk.';
       case 'failed':
         return 'EXAM DIRECTIVE: Copy failure logged. Handing off to bypass engineers.';
       case 'picked_up':
@@ -172,12 +155,9 @@ export default function KioskTerminal() {
 
   return (
     <div className="min-h-screen bg-[#09090b] text-slate-100 flex flex-col font-sans select-none relative overflow-hidden">
-      
-      {/* GLOW DECORATIONS */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-500/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-500/5 rounded-full blur-[120px] pointer-events-none" />
 
-      {/* FIXED BANNER HEADER */}
       <header className="border-b border-[#202023] bg-[#111113]/80 backdrop-blur-md px-6 py-4.5 z-10">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -196,44 +176,9 @@ export default function KioskTerminal() {
         </div>
       </header>
 
-      {/* CORE FRAME CONTAINER */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
-        
-        {/* SCANNER CONSOLE HEROBOX */}
-        {!searched && (
-          <div className="text-center space-y-4 mb-4 select-none">
-            <h2 className="text-3xl font-black text-white tracking-tight font-sans">
-              STATUS KIOSK TERMINAL — SCAN OR ENTER DISK ID
-            </h2>
-            <p className="text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
-              Scan the QR Code on your DDV Drive Ticket, or enter your Disk ID manually below to load live replication progress logs.
-            </p>
-          </div>
-        )}
-
-        {/* SCANNER TARGET AND INPUT ZONE */}
-        <div className="relative max-w-xl w-full mx-auto bg-[#16161A] p-6 rounded-2xl border border-blue-900/30 shadow-2xl space-y-6">
-          <form onSubmit={handleLookup} className="space-y-6">
-            
-            {/* CYBERPUNK QR TARGETING GRAPHIC */}
-            <div className="relative h-44 bg-black/50 rounded-xl border border-[#2A2A2E] flex flex-col items-center justify-center overflow-hidden select-none">
-              {/* LASER LINE */}
-              <div className="absolute inset-x-0 h-0.5 bg-blue-500/80 shadow-[0_0_12px_#3b82f6] animate-bounce" style={{ animationDuration: '3s' }} />
-              
-              {/* CORNER BRACKETS */}
-              <div className="absolute top-4 left-4 w-5 h-5 border-t-2 border-l-2 border-blue-500/40" />
-              <div className="absolute top-4 right-4 w-5 h-5 border-t-2 border-r-2 border-blue-500/40" />
-              <div className="absolute bottom-4 left-4 w-5 h-5 border-b-2 border-l-2 border-blue-500/40" />
-              <div className="absolute bottom-4 right-4 w-5 h-5 border-b-2 border-r-2 border-blue-500/40" />
-
-              <QrCode className="h-14 w-14 text-blue-500/30 animate-pulse" />
-              
-              <div className="text-[10px] font-mono text-blue-450 tracking-widest uppercase font-extrabold mt-3 animate-pulse">
-                Awaiting Optical Hardware Trigger...
-              </div>
-            </div>
-
-            {/* BARCODE WEDGE INPUT */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-6">
+        <div className="relative max-w-3xl w-full mx-auto bg-[#16161A] p-6 rounded-2xl border border-blue-900/30 shadow-2xl space-y-5">
+          <form onSubmit={handleLookup} className="space-y-4">
             <div className="relative">
               <input
                 ref={scannerInputRef}
@@ -253,368 +198,203 @@ export default function KioskTerminal() {
                   {loading ? 'READING...' : 'Search'}
                 </button>
               </div>
-              
               <div className="absolute inset-y-0 left-0 pl-4.5 flex items-center pointer-events-none">
                 <Search className="h-5 w-5 text-slate-500" />
               </div>
             </div>
 
-            <div className="border-t border-[#2A2A2E] pt-3 text-center text-[10px] text-slate-500 font-mono space-y-1 select-none">
-              <p>👉 Wedge scanners emulate physical keyboard keypresses. Focus is kept automatically locked on the reader target.</p>
-              <p>If testing manually, type the Disk ID (e.g. <b>disk-101-kfahk834Ws893rhP</b>) above and hit Enter.</p>
-            </div>
-          </form>
-        </div>
+            <div className="rounded-xl border border-[#2A2A2E] bg-[#0E0E10] min-h-[300px] p-4 md:p-6 flex items-center justify-center">
+              {!searched && (
+                <div className="relative h-56 w-full rounded-xl border border-[#2A2A2E] flex flex-col items-center justify-center overflow-hidden bg-black/40">
+                  <div className="absolute inset-x-0 h-0.5 bg-blue-500/80 shadow-[0_0_12px_#3b82f6] animate-bounce" style={{ animationDuration: '3s' }} />
+                  <div className="absolute top-4 left-4 w-5 h-5 border-t-2 border-l-2 border-blue-500/40" />
+                  <div className="absolute top-4 right-4 w-5 h-5 border-t-2 border-r-2 border-blue-500/40" />
+                  <div className="absolute bottom-4 left-4 w-5 h-5 border-b-2 border-l-2 border-blue-500/40" />
+                  <div className="absolute bottom-4 right-4 w-5 h-5 border-b-2 border-r-2 border-blue-500/40" />
+                  <QrCode className="h-14 w-14 text-blue-500/30 animate-pulse" />
+                  <div className="text-[10px] font-mono text-blue-450 tracking-widest uppercase font-extrabold mt-3 animate-pulse">
+                    Awaiting Optical Hardware Trigger...
+                  </div>
+                </div>
+              )}
 
-        {/* RESULTS WRAPPER DISPLAY */}
-        {searched && (
-          <div className="mt-8 space-y-6">
-            
-            {loading ? (
-              <div className="py-20 text-center space-y-3">
-                <div className="animate-spin inline-block w-8 h-8 border-[3px] border-current border-t-transparent text-blue-500 rounded-full" role="status" aria-label="loading">
-                  <span className="sr-only">Querying database...</span>
+              {searched && loading && (
+                <div className="py-10 text-center space-y-3">
+                  <div className="animate-spin inline-block w-8 h-8 border-[3px] border-current border-t-transparent text-blue-500 rounded-full" role="status" aria-label="loading" />
+                  <p className="text-xs font-mono text-slate-450 animate-pulse">QUERYING REPLICATOR ARRAY V2...</p>
                 </div>
-                <p className="text-xs font-mono text-slate-450 animate-pulse">QUERYING REPLICATOR ARRAY V2...</p>
-              </div>
-            ) : errorMsg ? (
-              <div className="bg-rose-950/20 border border-rose-900/40 rounded-xl p-8 text-center space-y-4 max-w-md mx-auto">
-                <XCircle className="h-12 w-12 text-rose-500 mx-auto" />
-                <div className="space-y-1">
-                  <h4 className="font-extrabold text-white text-sm uppercase font-mono">Asset Sequence Mismatch</h4>
-                  <p className="text-xs text-rose-350 leading-relaxed">{errorMsg}</p>
-                </div>
-                <div className="text-[11px] text-slate-500 font-mono">
-                  Confirm physical barcode sticker is fully readable, or visit the floor supervisor desk.
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6 animate-fadeIn">
-                
-                {/* MINIMAL CURRENT STATUS SCREEN - MAIN HERO VIEW */}
-                <div className="bg-[#16161A] border border-[#2A2A2E] rounded-2xl p-6 md:p-8 shadow-xl space-y-6 relative overflow-hidden">
-                  
-                  {/* TOP BACKGROUND GLOW */}
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+              )}
 
-                  {/* MINI TOP BAR */}
-                  <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-4 gap-4 flex-wrap">
-                    <div className="space-y-1 text-left">
-                      <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">DRIVE TRACKING REFERENCE</div>
-                      <div className="flex items-center gap-2">
+              {searched && !loading && errorMsg && (
+                <div className="w-full bg-rose-950/20 border border-rose-900/40 rounded-xl p-8 text-center space-y-4 max-w-xl mx-auto">
+                  <XCircle className="h-12 w-12 text-rose-500 mx-auto" />
+                  <div className="space-y-1">
+                    <h4 className="font-extrabold text-white text-sm uppercase font-mono">Asset Sequence Mismatch</h4>
+                    <p className="text-xs text-rose-350 leading-relaxed">{errorMsg}</p>
+                  </div>
+                </div>
+              )}
+
+              {searched && !loading && diskRecord && (
+                <div className="w-full space-y-4 animate-fadeIn">
+                  <div className="flex items-center justify-between gap-4 flex-wrap border-b border-[#2A2A2E] pb-3">
+                    <div>
+                      <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Drive Tracking Reference</div>
+                      <div className="flex items-center gap-2 mt-1">
                         <HardDrive className="h-5 w-5 text-blue-400" />
-                        <span className="text-2xl font-mono font-black text-white">{diskRecord?.id}</span>
+                        <span className="text-2xl font-mono font-black text-white">{diskRecord.id}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={handleResetSearch}
-                        className="px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white border border-[#2A2A2E] bg-[#0E0E10] hover:bg-slate-900 rounded-xl transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        Search Another
-                      </button>
-                      {diskRecord && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPrintedTicketDisk(diskRecord);
-                            setPrintSuccess(true);
-                          }}
-                          className="px-4 py-2.5 text-xs font-bold text-slate-350 hover:text-white border border-[#2A2A2E] bg-[#0E0E10] hover:bg-slate-900 rounded-xl transition cursor-pointer flex items-center gap-2"
-                          title="Simulate paper ticket print"
-                        >
-                          <Printer className="h-4 w-4 text-blue-400" />
-                          <span>Print Status Ticket</span>
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetSearch}
+                      className="px-4 py-2.5 text-xs font-bold text-slate-300 hover:text-white border border-[#2A2A2E] bg-[#0E0E10] hover:bg-slate-900 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Search Another
+                    </button>
                   </div>
 
-                  {/* PRINT SCREEN SUCCESS */}
-                  {printSuccess && printedTicketDisk && (
-                    <div className="flex flex-col items-center justify-center p-4 bg-[#111113]/80 rounded-2xl border border-[#2A2A2E] gap-4 animate-fadeIn">
-                      <div className="flex items-center justify-between w-full max-w-md text-[10px] tracking-wider font-mono font-black text-slate-400">
-                        <span>*** THERMAL STATUS TICKET PRINTED ***</span>
-                        <button 
-                          type="button"
-                          onClick={() => setPrintSuccess(false)}
-                          className="text-rose-400 hover:text-rose-300 font-bold px-2 py-0.5 border border-rose-900/30 rounded bg-rose-950/10 cursor-pointer"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-
-                      {/* MINIMIZED TICKET - U.S. DOLLAR BILL SIZE */}
-                      <div className="w-full max-w-md min-h-[165px] bg-emerald-50/95 border-2 border-dashed border-emerald-600 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none">
-                        {/* LEFT COLUMN - REQUIRED DATA ONLY */}
-                        <div className="flex flex-col justify-between h-full text-left flex-1 min-w-0">
-                          <div>
-                            <span className="text-[9px] text-emerald-800 tracking-wider font-black block leading-none uppercase">STATUS RECEIPT</span>
-                            <span className="text-xs sm:text-sm font-black text-slate-900 block mt-1 tracking-tight break-all leading-tight whitespace-normal">{printedTicketDisk.id}</span>
-                          </div>
-                          
-                          <div className="space-y-0.5 my-1">
-                            <div className="text-[9px] text-slate-650 flex justify-between">
-                              <span>SOURCE DATASET:</span>
-                              <span className="font-extrabold text-blue-800 text-[10px]">{printedTicketDisk.source_requested_id}</span>
-                            </div>
-                            <div className="text-[9px] text-slate-650 flex justify-between">
-                              <span>CURRENT STATE:</span>
-                              <span className="font-extrabold text-emerald-700 text-[10px] uppercase">
-                                {printedTicketDisk.status === 'received' ? 'Received (01)' :
-                                 printedTicketDisk.status === 'copying' ? 'Active Copying (02)' :
-                                 printedTicketDisk.status === 'completed' ? 'Completed (03)' :
-                                 printedTicketDisk.status === 'failed' ? 'Failed (03)' :
-                                 'Discharged (04)'}
-                              </span>
-                            </div>
-                          </div>
-
-                          <span className="text-[8px] text-slate-600 font-sans leading-tight mt-1 border-t border-emerald-600/30 pt-1 block">
-                            Retain receipt to reclaim physical drive.
-                          </span>
-                        </div>
-
-                        {/* RIGHT COLUMN - QR CODE ONLY */}
-                        <div className="flex flex-col items-center justify-center bg-white p-2 border border-emerald-300 rounded-lg shrink-0 w-[95px] h-[95px]">
-                          <QRCodeSVG value={printedTicketDisk.id} size={70} level="M" />
-                        </div>
-                      </div>
-
-                      <p className="text-[9px] text-slate-500 font-mono text-center">Physical floor verification code saved securely on local tag replica.</p>
-                    </div>
-                  )}
-
-                  {/* ACTIVE HERO DISPOSITION ACCORDING TO USER'S REQUESTED 4 PHASES */}
-                  <div className="py-2 text-center space-y-2">
-                    <span className="text-[10px] font-mono tracking-widest text-[#22c55e] uppercase bg-emerald-950/30 px-3 py-1 rounded-full border border-emerald-900/40 font-bold font-mono">
-                      CURRENT DISPOSITION
-                    </span>
-                    <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight pt-2">
-                      {diskRecord?.status === 'received' && "Phase 01: Pending"}
-                      {diskRecord?.status === 'copying' && "Phase 02: Duplication Active"}
-                      {diskRecord?.status === 'completed' && "Phase 03: Copy Complete"}
-                      {diskRecord?.status === 'failed' && "Phase 03: Copy Errored"}
-                      {diskRecord?.status === 'picked_up' && "Phase 04: Returned"}
+                  <div className="py-1 text-center space-y-2">
+                    <span className="text-[10px] font-mono tracking-widest text-[#22c55e] uppercase bg-emerald-950/30 px-3 py-1 rounded-full border border-emerald-900/40 font-bold">Current Disposition</span>
+                    <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight pt-1">
+                      {diskRecord.status === 'received' && 'Phase 01: Pending'}
+                      {diskRecord.status === 'copying' && 'Phase 02: Duplication Active'}
+                      {diskRecord.status === 'completed' && 'Phase 03: Copy Complete'}
+                      {diskRecord.status === 'failed' && 'Phase 03: Copy Errored'}
+                      {diskRecord.status === 'picked_up' && 'Phase 04: Returned'}
                     </h2>
-                    <p className="text-xs text-slate-300 max-w-xl mx-auto pt-1 leading-relaxed">
-                      {currentStatusMsg()}
-                    </p>
+                    <p className="text-xs text-slate-300 max-w-xl mx-auto pt-1 leading-relaxed">{currentStatusMsg()}</p>
                   </div>
 
-                  {/* MINIMAL HIGHLIGHT OF 4 PHASES - THE STEPPER */}
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-4 text-left">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                     {[
-                      { 
-                        phase: 1, 
-                        num: 'Phase 01', 
-                        title: 'Pending', 
-                        desc: 'Intake and registration' 
-                      },
-                      { 
-                        phase: 2, 
-                        num: 'Phase 02', 
-                        title: 'Duplication Active', 
-                        desc: 'Replication in progress' 
-                      },
-                      { 
-                        phase: 3, 
-                        num: 'Phase 03', 
-                        title: diskRecord?.status === 'failed' ? 'Copy Errored' : 'Copy Complete', 
-                        desc: diskRecord?.status === 'failed' ? 'Intervention needed' : 'Integrity checked ok' 
-                      },
-                      { 
-                        phase: 4, 
-                        num: 'Phase 04', 
-                        title: 'Returned', 
-                        desc: 'Released back to Haver' 
-                      }
+                      { phase: 1, num: 'Phase 01', title: 'Pending', desc: 'Intake and registration' },
+                      { phase: 2, num: 'Phase 02', title: 'Duplication Active', desc: 'Replication in progress' },
+                      { phase: 3, num: 'Phase 03', title: diskRecord.status === 'failed' ? 'Copy Errored' : 'Copy Complete', desc: diskRecord.status === 'failed' ? 'Intervention needed' : 'Integrity checked ok' },
+                      { phase: 4, num: 'Phase 04', title: 'Returned', desc: 'Released back to owner' }
                     ].map(step => {
-                      const curIdx = diskRecord ? (
-                        diskRecord.status === 'received' ? 1 : 
+                      const curIdx =
+                        diskRecord.status === 'received' ? 1 :
                         diskRecord.status === 'copying' ? 2 :
                         (diskRecord.status === 'completed' || diskRecord.status === 'failed') ? 3 :
-                        4
-                      ) : 1;
+                        4;
 
                       const isCompleted = step.phase < curIdx;
                       const isActive = step.phase === curIdx;
-                      const isFailed = step.phase === 3 && diskRecord?.status === 'failed';
-                      
-                      let cardStyle = "bg-[#0E0E10]/85 border-[#2A2A2E] text-slate-500 opacity-60";
-                      let indicatorColor = "text-slate-600";
-                      
+                      const isFailed = step.phase === 3 && diskRecord.status === 'failed';
+
+                      let cardStyle = 'bg-[#0E0E10]/85 border-[#2A2A2E] text-slate-500 opacity-60';
                       if (isActive) {
-                        if (isFailed) {
-                          cardStyle = "bg-rose-950/20 border-rose-900/40 text-rose-200 ring-2 ring-rose-500/20";
-                          indicatorColor = "text-rose-500";
-                        } else {
-                          cardStyle = "bg-blue-950/20 border-blue-900/40 text-blue-100 ring-2 ring-blue-500/20";
-                          indicatorColor = "text-blue-400";
-                        }
+                        cardStyle = isFailed
+                          ? 'bg-rose-950/20 border-rose-900/40 text-rose-200 ring-2 ring-rose-500/20'
+                          : 'bg-blue-950/20 border-blue-900/40 text-blue-100 ring-2 ring-blue-500/20';
                       } else if (isCompleted) {
-                        cardStyle = "bg-emerald-955/15 border-emerald-900/30 text-emerald-100";
-                        indicatorColor = "text-emerald-400";
+                        cardStyle = 'bg-emerald-955/15 border-emerald-900/30 text-emerald-100';
                       }
 
                       return (
-                        <div key={step.phase} className={`p-4 rounded-xl border flex flex-col justify-between space-y-3 transition-all duration-350 ${cardStyle}`}>
+                        <div key={step.phase} className={`p-4 rounded-xl border flex flex-col justify-between space-y-3 ${cardStyle}`}>
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono tracking-wider font-extrabold">{step.num}</span>
                             {isCompleted ? (
                               <CheckCircle className="h-4 w-4 text-emerald-400" />
                             ) : isActive ? (
-                              isFailed ? <XCircle className="h-4 w-4 text-rose-500 animate-pulse" /> :
-                              <Cpu className="h-4 w-4 text-blue-400 animate-spin" style={{ animationDuration: '3s' }} />
+                              isFailed ? <XCircle className="h-4 w-4 text-rose-500 animate-pulse" /> : <Cpu className="h-4 w-4 text-blue-400 animate-spin" style={{ animationDuration: '3s' }} />
                             ) : (
                               <Clock className="h-4 w-4 text-slate-700" />
                             )}
                           </div>
                           <div>
-                            <div className="text-xs font-bold text-white transition-colors duration-300">{step.title}</div>
-                            <div className="text-[10px] text-slate-400 leading-normal mt-0.5 opacity-90">{step.desc}</div>
-                          </div>
-                          <div className={`text-[9px] font-mono font-bold uppercase tracking-wider border-t border-white/[0.02] pt-2 ${indicatorColor}`}>
-                            {isCompleted ? 'COMPLETED' : isActive ? (isFailed ? 'FAILED' : 'IN PROGRESS') : 'LOCKED'}
+                            <div className="text-xs font-bold text-white">{step.title}</div>
+                            <div className="text-[10px] text-slate-400 leading-normal mt-0.5">{step.desc}</div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-
                 </div>
+              )}
+            </div>
 
-                {/* EXPANDABLE LEDGER & TELEMETRY SECTION */}
-                <div className="bg-[#111113] border border-[#2A2A2E] rounded-2xl overflow-hidden shadow-md">
-                  <button
-                    type="button"
-                    onClick={() => setIsRecordsExpanded(!isRecordsExpanded)}
-                    className="w-full text-left p-5 flex items-center justify-between hover:bg-[#16161A] transition focus:outline-none cursor-pointer"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Database className="h-4 w-4 text-blue-400" />
-                        <h3 className="text-xs font-bold font-mono text-slate-300 uppercase tracking-widest">
-                          DETAILED CORE LEDGER
-                        </h3>
-                        <span className="inline-flex items-center rounded bg-slate-900 px-1.5 py-0.5 text-[9px] font-mono font-bold text-slate-400 border border-[#2A2A2E]">
-                          {statusLogs.length} Entries
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">
-                        Click to expand fully audited status records, scan updates, and state transition history
-                      </p>
-                    </div>
-                    <div>
-                      {isRecordsExpanded ? (
-                        <ChevronUp className="h-5 w-5 text-slate-450" />
-                      ) : (
-                        <ChevronDown className="h-5 w-5 text-slate-450" />
-                      )}
-                    </div>
-                  </button>
-
-                  {isRecordsExpanded && (
-                    <div className="border-t border-[#2A2A2E]/50 p-6 bg-[#0E0E10] animate-fadeIn text-left">
-                      
-                      <div className="space-y-3">
-                        <h4 className="text-[10px] font-extrabold font-mono text-blue-400 uppercase tracking-widest pl-1">
-                          Audited State Change Ledger Index
-                        </h4>
-                        
-                        {statusLogs.length > 0 ? (
-                          <div className="overflow-x-auto bg-[#111113] border border-[#2A2A2E]/70 rounded-xl p-4">
-                            <table className="w-full text-left text-[11px] font-mono whitespace-nowrap lg:whitespace-normal">
-                              <thead>
-                                <tr className="border-b border-[#2A2A2E]/60 text-slate-500 uppercase text-[9px]">
-                                  <th className="pb-2.5 px-2">Timestamp</th>
-                                  <th className="pb-2.5 px-2">Transition Phase</th>
-                                  <th className="pb-2.5 px-2">Handoff / Desk</th>
-                                  <th className="pb-2.5 px-2 text-right lg:text-left">Audited Progress Details</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-white/[0.02] text-slate-300">
-                                {statusLogs.map((log) => {
-                                  let phaseBadgeStyle = 'bg-slate-900 border-slate-800 text-slate-400';
-                                  let phaseLabel = 'Phase 01: Pending';
-                                  
-                                  if (log.status === 'received') {
-                                    phaseBadgeStyle = 'bg-slate-950/80 border-[#2A2A2E] text-slate-400';
-                                    phaseLabel = 'Phase 01: Pending';
-                                  } else if (log.status === 'copying') {
-                                    phaseBadgeStyle = 'bg-blue-950/25 border-blue-900/30 text-blue-400 animate-pulse';
-                                    phaseLabel = 'Phase 02: Duplication Active';
-                                  } else if (log.status === 'completed') {
-                                    phaseBadgeStyle = 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400';
-                                    phaseLabel = 'Phase 03: Copy Complete';
-                                  } else if (log.status === 'failed') {
-                                    phaseBadgeStyle = 'bg-rose-950/20 border-rose-900/40 text-rose-400';
-                                    phaseLabel = 'Phase 03: Copy Errored';
-                                  } else if (log.status === 'picked_up') {
-                                    phaseBadgeStyle = 'bg-indigo-950/20 border-indigo-900/40 text-indigo-400';
-                                    phaseLabel = 'Phase 04: Returned';
-                                  }
-
-                                  let opBadgeStyle = 'text-slate-400 bg-slate-950/50 border-slate-900';
-                                  if (log.operator.includes('Volunteer') || log.operator.includes('Intake')) {
-                                    opBadgeStyle = 'text-amber-400 bg-amber-950/15 border-amber-900/30';
-                                  } else if (log.operator.includes('Copier') || log.operator.includes('Processing')) {
-                                    opBadgeStyle = 'text-cyan-400 bg-cyan-950/15 border-cyan-900/30';
-                                  } else if (log.operator.includes('Disbursement') || log.operator.includes('Discharge') || log.operator.includes('Desk')) {
-                                    opBadgeStyle = 'text-purple-400 bg-purple-950/15 border-purple-900/30';
-                                  }
-
-                                  return (
-                                    <tr key={log.id} className="hover:bg-white/[0.015] transition-colors">
-                                      <td className="py-2 px-2 text-slate-500 text-[10px] whitespace-nowrap">
-                                        {new Date(log.timestamp).toLocaleString()}
-                                      </td>
-                                      <td className="py-2 px-2">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${phaseBadgeStyle}`}>
-                                          {phaseLabel}
-                                        </span>
-                                      </td>
-                                      <td className="py-2 px-2">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-medium border ${opBadgeStyle}`}>
-                                          {log.operator}
-                                        </span>
-                                      </td>
-                                      <td className="py-2 px-2 text-slate-400 text-[10px] break-words text-right lg:text-left font-mono">
-                                        {log.description}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <div className="bg-[#111113] border border-[#2A2A2E]/70 rounded-xl py-8 text-center text-slate-500 text-xs font-mono">
-                            No registered audit transitions identified for this sequence tag.
-                          </div>
-                        )}
-                      </div>
-
-                    </div>
-                  )}
-
+            {searched && !loading && autoResetSeconds !== null && (
+              <div className="space-y-2 px-1">
+                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+                  <span>Result stays visible for touch users.</span>
+                  <span>Auto reset in {autoResetSeconds}s</span>
                 </div>
-
+                <div className="h-2.5 w-full rounded-full bg-[#0E0E10] border border-[#2A2A2E] overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-1000"
+                    style={{ width: `${resetProgressPct}%` }}
+                  />
+                </div>
               </div>
             )}
 
+            <div className="border-t border-[#2A2A2E] pt-2 text-center text-[10px] text-slate-500 font-mono">
+              Wedge scanners emulate keyboard keypresses. Focus remains locked on the reader target.
+            </div>
+          </form>
+        </div>
+
+        {searched && !loading && (
+          <div className="max-w-3xl mx-auto mt-4 bg-[#111113] border border-[#2A2A2E] rounded-2xl overflow-hidden shadow-md">
+            <button
+              type="button"
+              onClick={() => setIsRecordsExpanded(!isRecordsExpanded)}
+              className="w-full text-left p-5 flex items-center justify-between hover:bg-[#16161A] transition focus:outline-none cursor-pointer"
+            >
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-blue-400" />
+                  <h3 className="text-xs font-bold font-mono text-slate-300 uppercase tracking-widest">Detailed Core Ledger</h3>
+                  <span className="inline-flex items-center rounded bg-slate-900 px-1.5 py-0.5 text-[9px] font-mono font-bold text-slate-400 border border-[#2A2A2E]">{statusLogs.length} Entries</span>
+                </div>
+                <p className="text-[11px] text-slate-400">Audit trail appears directly below the scan result.</p>
+              </div>
+              {isRecordsExpanded ? <ChevronUp className="h-5 w-5 text-slate-450" /> : <ChevronDown className="h-5 w-5 text-slate-450" />}
+            </button>
+
+            {isRecordsExpanded && (
+              <div className="border-t border-[#2A2A2E]/50 p-4 bg-[#0E0E10]">
+                <div className="text-[10px] font-mono uppercase text-slate-500 mb-2">Touch scroll available below</div>
+                <div className="max-h-[280px] overflow-y-auto overflow-x-auto bg-[#111113] border border-[#2A2A2E]/70 rounded-xl p-3">
+                  {statusLogs.length > 0 ? (
+                    <table className="w-full text-left text-[11px] font-mono whitespace-nowrap lg:whitespace-normal">
+                      <thead>
+                        <tr className="border-b border-[#2A2A2E]/60 text-slate-500 uppercase text-[9px]">
+                          <th className="pb-2.5 px-2">Timestamp</th>
+                          <th className="pb-2.5 px-2">Status</th>
+                          <th className="pb-2.5 px-2">Operator</th>
+                          <th className="pb-2.5 px-2">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.02] text-slate-300">
+                        {statusLogs.map((log) => (
+                          <tr key={log.id} className="hover:bg-white/[0.015] transition-colors">
+                            <td className="py-2 px-2 text-slate-500 text-[10px] whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                            <td className="py-2 px-2 uppercase text-[10px]">{log.status}</td>
+                            <td className="py-2 px-2 text-[10px]">{log.operator}</td>
+                            <td className="py-2 px-2 text-[10px] break-words">{log.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="py-8 text-center text-slate-500 text-xs font-mono">No registered audit transitions identified for this sequence tag.</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
-
       </main>
 
-      {/* FOOTER COOLDOWN */}
-      <footer className="border-t border-[#202023] py-5 text-center text-[10px] text-slate-650 font-mono mt-12 bg-[#0E0E10]">
-        <div>CONFIDENTIAL DISASTER DRIVE VERIFICATION PLATFORM &bull; VERSION 2.0</div>
-        <div className="mt-1 text-slate-600">ReadOnly replica node sync tracking: OK &bull; Master cluster: ONLINE</div>
+      <footer className="border-t border-[#202023] py-5 text-center text-[10px] text-slate-650 font-mono mt-8 bg-[#0E0E10]">
+        <div>CONFIDENTIAL DISASTER DRIVE VERIFICATION PLATFORM | VERSION 2.0</div>
+        <div className="mt-1 text-slate-600">ReadOnly replica node sync tracking: OK | Master cluster: ONLINE</div>
       </footer>
-
     </div>
   );
 }

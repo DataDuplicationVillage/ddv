@@ -92,6 +92,11 @@ def _set_role(user, role):
 
 def _seed_default_users():
     User = get_user_model()
+    # Seed defaults only for first-time bootstrap.
+    # If users already exist, do not recreate deleted accounts.
+    if User.objects.exists():
+        return
+
     defaults = [
         ('admin', 'admin123', 'System Administrator', 'admin'),
         ('volunteer', 'vol123', 'Volunteer Operator', 'volunteer'),

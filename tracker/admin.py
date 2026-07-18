@@ -74,7 +74,7 @@ class DiskAdmin(ModelAdmin):
                 mode = form.cleaned_data['mode']
                 if mode == 'new':
                     haver = DiskHaver.objects.create(
-                        name=f"Haver-{uuid.uuid4().hex[:8]}"
+                        name=f"Owner-{uuid.uuid4().hex[:8]}"
                     )
                 else:
                     haver = form.cleaned_data['found_diskhaver']
