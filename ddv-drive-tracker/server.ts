@@ -31,31 +31,31 @@ function createInitialState(): ServerState {
         id: 'DS-A',
         name: 'Source A',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
+        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
       },
       {
         id: 'DS-B',
         name: 'Source B',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
+        required_specs: { interface: 'All Interfaces', minimum_size_tb: 6 }
       },
       {
         id: 'DS-C',
         name: 'Source C',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
+        required_specs: { interface: 'All Interfaces', minimum_size_tb: 6 }
       },
       {
         id: 'DS-D',
         name: 'Source D',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
+        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
       },
       {
         id: 'DS-E',
         name: 'Source E',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
+        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
       }
     ],
     disks: [
@@ -224,16 +224,16 @@ function createInitialState(): ServerState {
       { id: 'dup-09', name: 'Tower-01', manufacturer: 'Systor', slots_total: 11, slots_status: [true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2024 },
       { id: 'dup-10', name: 'Tower-02', manufacturer: 'Systor', slots_total: 11, slots_status: [true, true, true, false, true, true, true, true, true, true, true], year_in_service: 2024 },
       { id: 'dup-11', name: 'Tower-03', manufacturer: 'Systor', slots_total: 11, slots_status: [true, true, true, true, true, true, false, false, true, true, true], year_in_service: 2024 },
-      { id: 'dup-12', name: 'SuperDup-A', manufacturer: 'Acard', slots_total: 20, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2025 },
-      { id: 'dup-13', name: 'SuperDup-B', manufacturer: 'Acard', slots_total: 20, slots_status: [true, true, true, true, false, true, true, true, true, true, true, true, false, true, true, true, true, true, true, true], year_in_service: 2025 },
+      { id: 'dup-12', name: 'SuperDup-A', manufacturer: 'Acard', slots_total: 20, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2024 },
+      { id: 'dup-13', name: 'SuperDup-B', manufacturer: 'Acard', slots_total: 20, slots_status: [true, true, true, true, false, true, true, true, true, true, true, true, false, true, true, true, true, true, true, true], year_in_service: 2024 },
       { id: 'dup-14', name: 'Dup-Epsilon 01', manufacturer: 'Spartan', slots_total: 8, slots_status: [true, true, true, true, true, true, true, true], year_in_service: 2022 },
       { id: 'dup-15', name: 'Dup-Epsilon 02', manufacturer: 'Spartan', slots_total: 8, slots_status: [true, true, true, true, false, true, true, true], year_in_service: 2022 },
       { id: 'dup-16', name: 'Dup-Zeta 01', manufacturer: 'Wytron', slots_total: 12, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2023 },
       { id: 'dup-17', name: 'Dup-Zeta 02', manufacturer: 'Wytron', slots_total: 12, slots_status: [true, true, true, true, true, true, true, true, true, true, false, true], year_in_service: 2023 },
       { id: 'dup-18', name: 'Acard-Tower-01', manufacturer: 'Acard', slots_total: 10, slots_status: [true, true, true, true, true, true, true, true, true, true], year_in_service: 2021 },
       { id: 'dup-19', name: 'Acard-Tower-02', manufacturer: 'Acard', slots_total: 10, slots_status: [true, true, true, true, true, true, true, true, false, true], year_in_service: 2021 },
-      { id: 'dup-20', name: 'Spartan-Pro-1', manufacturer: 'Spartan', slots_total: 16, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2024 },
-      { id: 'dup-21', name: 'Spartan-Pro-2', manufacturer: 'Spartan', slots_total: 16, slots_status: [true, true, true, false, true, true, true, true, true, true, true, false, true, true, true, true], year_in_service: 2024 },
+      { id: 'dup-20', name: 'Spartan-Pro-1', manufacturer: 'Spartan', slots_total: 16, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2025 },
+      { id: 'dup-21', name: 'Spartan-Pro-2', manufacturer: 'Spartan', slots_total: 16, slots_status: [true, true, true, false, true, true, true, true, true, true, true, false, true, true, true, true], year_in_service: 2025 },
       { id: 'dup-22', name: 'MiniDup-1', manufacturer: 'Systor', slots_total: 4, slots_status: [true, true, true, true], year_in_service: 2022 },
       { id: 'dup-23', name: 'MiniDup-2', manufacturer: 'Systor', slots_total: 4, slots_status: [true, true, false, true], year_in_service: 2022 },
       { id: 'dup-24', name: 'Wytron-Heavy-1', manufacturer: 'Wytron', slots_total: 24, slots_status: [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true], year_in_service: 2025 },
@@ -269,6 +269,27 @@ function loadDB(): ServerState {
           }
           if (updated.isLocked === undefined) {
             updated.isLocked = false;
+            changed = true;
+          }
+          return updated;
+        });
+      }
+      if (loaded.datasources && Array.isArray(loaded.datasources)) {
+        loaded.datasources = loaded.datasources.map((source: any) => {
+          const updated = { ...source };
+          const specs = { ...(updated.required_specs || {}) };
+          if (typeof specs.minimum_size_tb !== 'number') {
+            const sizeOptions = Array.isArray(specs.size_options) ? specs.size_options : [];
+            const tbValues = sizeOptions
+              .map((size: string) => {
+                const match = String(size).trim().match(/^(\d+(?:\.\d+)?)\s*TB$/i);
+                return match ? Number(match[1]) : null;
+              })
+              .filter((value: number | null): value is number => value !== null);
+
+            specs.minimum_size_tb = tbValues.length > 0 ? Math.min(...tbValues) : 8;
+            delete specs.size_options;
+            updated.required_specs = specs;
             changed = true;
           }
           return updated;
@@ -521,7 +542,7 @@ app.post('/api/datasources', (req, res) => {
     id: `DS-${Date.now()}`,
     name,
     description: description || '',
-    required_specs: required_specs || { interface: 'SATA 3', size_options: ['8TB'] }
+    required_specs: required_specs || { interface: 'SATA 3', minimum_size_tb: 8 }
   };
   
   db.datasources.push(newSource);
