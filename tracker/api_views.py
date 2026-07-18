@@ -3,6 +3,7 @@ import re
 import uuid
 from datetime import datetime
 
+from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.models import Group
 from django.db import transaction
@@ -94,7 +95,9 @@ def _seed_default_users():
     User = get_user_model()
     # Seed defaults only for first-time bootstrap.
     # If users already exist, do not recreate deleted accounts.
-    if User.objects.exists():
+    # Exclude the django-guardian AnonymousUser which is always present.
+    anon_name = getattr(settings, 'ANONYMOUS_USER_NAME', 'AnonymousUser')
+    if User.objects.exclude(username=anon_name).exists():
         return
 
     defaults = [
