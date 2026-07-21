@@ -696,21 +696,20 @@ app.post('/api/disks', (req, res) => {
     source_requested_id, status, received_time, copy_start_time,
     copy_complete_time, copy_fail_time, pickup_time, hd_image
   } = req.body;
-  
-  if (!id || !hd_serial) {
-    return res.status(400).json({ error: 'Disk ID Sequence and Serial number are mandatory.' });
-  }
+
+  const normalizedId = String(id || '').trim() || `disk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const normalizedSerial = String(hd_serial || '').trim() || 'N/A';
 
   // Ensure unique constraints
-  if (db.disks.some(d => d.id === id)) {
-    return res.status(400).json({ error: `Disk ID Sequence ${id} already exists.` });
+  if (db.disks.some(d => d.id === normalizedId)) {
+    return res.status(400).json({ error: `Disk ID Sequence ${normalizedId} already exists.` });
   }
 
   const newDisk: Disk = {
-    id,
+    id: normalizedId,
     hd_manufacturer: hd_manufacturer || 'Seagate',
     hd_model: hd_model || 'Unknown Model',
-    hd_serial,
+    hd_serial: normalizedSerial,
     hd_size: hd_size || '8TB',
     hd_speed: hd_speed || '7200 RPM',
     source_requested_id: source_requested_id || 'DS-01',

@@ -573,17 +573,14 @@ def api_disks(request):
 @require_http_methods(['POST'])
 def api_disks_create(request):
     payload = _json_body(request)
-    disk_id = str(payload.get('id', '')).strip()
-    serial = str(payload.get('hd_serial', '')).strip()
+    disk_id = str(payload.get('id', '')).strip() or f'disk-{uuid.uuid4().hex[:12]}'
+    serial = str(payload.get('hd_serial', '')).strip() or 'N/A'
     status = str(payload.get('status', 'received')).strip()
-
-    if not disk_id or not serial:
-        return JsonResponse({'error': 'Disk id and hd_serial are required.'}, status=400)
 
     if Disk.objects.filter(id=disk_id).exists():
         return JsonResponse({'error': f'Disk with id "{disk_id}" already exists.'}, status=400)
 
-    if Disk.objects.filter(serial_number__iexact=serial).exists():
+    if serial.lower() != 'n/a' and Disk.objects.filter(serial_number__iexact=serial).exists():
         return JsonResponse({'error': f'Disk with serial "{serial}" already exists.'}, status=400)
 
     model = _resolve_or_create_disk_model(payload)

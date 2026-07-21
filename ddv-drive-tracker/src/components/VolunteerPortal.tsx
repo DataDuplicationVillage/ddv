@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { toPng } from 'html-to-image';
 import { 
   Plus, RefreshCw, Barcode, HardDrive, ShieldAlert, Loader2, Info, Camera, Check, Upload, ArrowRight, CheckCircle, Clock, Search
 } from 'lucide-react';
@@ -89,10 +90,13 @@ export default function VolunteerPortal({
   // Search state for print/reprint and return tabs
   const [reprintSearchQuery, setReprintSearchQuery] = useState('');
   const [returnDiskSearchQuery, setReturnDiskSearchQuery] = useState('');
+  const [returnPage, setReturnPage] = useState(1);
+  const [reprintPage, setReprintPage] = useState(1);
 
   // Intake Flow Step trackers
-  const [intakeStep, setIntakeStep] = useState<1 | 2 | 4>(1);
+  const [intakeStep, setIntakeStep] = useState<1 | 2 | 4 | 5>(1);
   const [intakeSuccessRecord, setIntakeSuccessRecord] = useState<{ disk: Disk } | null>(null);
+  const [showIntakePreview, setShowIntakePreview] = useState(false);
 
   // Webcam states for drive image capture
   const [isWebcamActive, setIsWebcamActive] = useState(false);
@@ -103,17 +107,21 @@ export default function VolunteerPortal({
 
   // Scanning simulation and OCR states
   const [scanImageBase64, setScanImageBase64] = useState<string | null>(null);
+  const [capturedImageDataUrl, setCapturedImageDataUrl] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<any>(null);
   const [scanSkipWarning, setScanSkipWarning] = useState(false);
   const [adminOverrideDuplicateSerial, setAdminOverrideDuplicateSerial] = useState(false);
+  const [barcodeHints, setBarcodeHints] = useState<string[]>([]);
+  const [captureInfoTab, setCaptureInfoTab] = useState<'errors' | 'barcode' | 'ocr'>('errors');
+  const BARCODE_CONFIDENCE_THRESHOLD = 0.5;
 
   // Intake Drive Form State
   const [diskForm, setDiskForm] = useState({
     id: '',
-    hd_manufacturer: 'Seagate',
-    hd_model: '',
-    hd_serial: '',
+    hd_manufacturer: 'N/A',
+    hd_model: 'N/A',
+    hd_serial: 'N/A',
     hd_size: '8TB',
     hd_speed: '7200 RPM',
     source_requested_id: '',
@@ -121,6 +129,8 @@ export default function VolunteerPortal({
     received_time: '',
     hd_image: ''
   });
+
+  const intakePreviewImage = capturedImageDataUrl || diskForm.hd_image || scanImageBase64 || '';
 
   // Return Flow States
   const [selectedReturnDiskId, setSelectedReturnDiskId] = useState('');
@@ -131,6 +141,12 @@ export default function VolunteerPortal({
 
   // Ticket Modal state for printable tags
   const [printedTicketDisk, setPrintedTicketDisk] = useState<Disk | null>(null);
+  const [printContentShiftMm, setPrintContentShiftMm] = useState(0);
+  const [printContentShiftXMm, setPrintContentShiftXMm] = useState(0);
+  const [printSheetOffsetMm, setPrintSheetOffsetMm] = useState(0);
+  const [printSheetOffsetXMm, setPrintSheetOffsetXMm] = useState(0);
+  const tagPrintCardRef = useRef<HTMLDivElement | null>(null);
+  const ticketPrintCardRef = useRef<HTMLDivElement | null>(null);
 
   // Cleanup webcam stream on unmount
   useEffect(() => {
@@ -207,7 +223,7 @@ export default function VolunteerPortal({
 
   // Populate dynamic ID once disks load
   useEffect(() => {
-    if (disks.length > 0 && !diskForm.id) {
+    if (!diskForm.id) {
       setDiskForm(prev => ({
         ...prev,
         id: generateDiskID(disks)
@@ -228,10 +244,10 @@ export default function VolunteerPortal({
 
       let stream: MediaStream | null = null;
       const attempts = [
-        // Attempt 1: High-res back/environment camera
-        () => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }),
-        // Attempt 2: Standard back/environment camera
-        () => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }),
+        // Attempt 1: High-res back/environment camera with portrait framing for label capture
+        () => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.75 } }, audio: false }),
+        // Attempt 2: Standard back/environment camera with portrait preference
+        () => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 720 }, height: { ideal: 1280 }, aspectRatio: { ideal: 0.75 } }, audio: false }),
         // Attempt 3: User/front facing camera (common for webcams on desktops/laptops)
         () => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }),
         // Attempt 4: Any video source with audio explicitly turned off
@@ -285,6 +301,83 @@ export default function VolunteerPortal({
     setIsCameraSimulated(false);
   };
 
+  const isPlaceholderFieldValue = (value: unknown) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return true;
+    if (normalized === 'n/a') return true;
+    if (normalized.includes('unknown')) return true;
+    if (normalized.includes('unreadable')) return true;
+    if (normalized.includes('unresolved')) return true;
+    if (normalized.includes('?')) return true;
+    return false;
+  };
+
+  const normalizeExtractedField = (value: unknown) => {
+    const cleaned = String(value || '').trim();
+    return isPlaceholderFieldValue(cleaned) ? '' : cleaned;
+  };
+
+  const applyExtractedDriveMetadata = (
+    candidate: { hd_manufacturer?: unknown; hd_model?: unknown; hd_serial?: unknown },
+    confidence?: { hd_manufacturer?: number; hd_model?: number; hd_serial?: number }
+  ) => {
+    const manufacturerConfidence = Number(confidence?.hd_manufacturer ?? 0);
+    const modelConfidence = Number(confidence?.hd_model ?? 0);
+    const serialConfidence = Number(confidence?.hd_serial ?? 0);
+    const manufacturer = normalizeExtractedField(candidate.hd_manufacturer);
+    const model = normalizeExtractedField(candidate.hd_model);
+    const serial = normalizeExtractedField(candidate.hd_serial);
+
+    const qualifiedManufacturer = manufacturerConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? manufacturer : '';
+    const qualifiedModel = modelConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? model : '';
+    const qualifiedSerial = serialConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? serial : '';
+
+    if (!qualifiedManufacturer && !qualifiedModel && !qualifiedSerial) {
+      return;
+    }
+
+    setDiskForm(prev => ({
+      ...prev,
+      hd_manufacturer: qualifiedManufacturer && isPlaceholderFieldValue(prev.hd_manufacturer) ? qualifiedManufacturer : prev.hd_manufacturer,
+      hd_model: qualifiedModel && isPlaceholderFieldValue(prev.hd_model) ? qualifiedModel : prev.hd_model,
+      hd_serial: qualifiedSerial && isPlaceholderFieldValue(prev.hd_serial) ? qualifiedSerial : prev.hd_serial
+    }));
+
+    setScanResult((prev: any) => {
+      const previousData = prev?.data || {};
+      return {
+        ...(prev || {}),
+        success: true,
+        data: {
+          ...previousData,
+          hd_manufacturer: qualifiedManufacturer || previousData.hd_manufacturer || 'N/A',
+          hd_model: qualifiedModel || previousData.hd_model || 'N/A',
+          hd_serial: qualifiedSerial || previousData.hd_serial || 'N/A'
+        }
+      };
+    });
+  };
+
+  const applyCapturedImageForIntake = (dataUrl: string, options?: { stopCamera?: boolean }) => {
+    setScanImageBase64(dataUrl);
+    setCapturedImageDataUrl(dataUrl);
+    setScanResult(null);
+    setScanSkipWarning(false);
+    setAdminOverrideDuplicateSerial(false);
+    setDiskForm(prev => ({
+      ...prev,
+      hd_manufacturer: 'N/A',
+      hd_model: 'N/A',
+      hd_serial: 'N/A',
+      hd_image: dataUrl
+    }));
+    analyzeLabelForBarcodeMetadata(dataUrl);
+    if (options?.stopCamera) {
+      stopWebcam();
+    }
+    // Barcode-only intake mode: camera and browse follow the same barcode extraction path.
+  };
+
   const captureWebcam = () => {
     if (isCameraSimulated) {
       // Gracefully capture Seagate 8TB mock label as the fallback scan
@@ -296,20 +389,30 @@ export default function VolunteerPortal({
     if (videoRef.current) {
       const video = videoRef.current;
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
+      const targetRatio = 3 / 4;
+      const sourceWidth = video.videoWidth || 720;
+      const sourceHeight = video.videoHeight || 1280;
+      let cropX = 0;
+      let cropY = 0;
+      let cropWidth = sourceWidth;
+      let cropHeight = sourceHeight;
+      const sourceRatio = sourceWidth / sourceHeight;
+
+      if (sourceRatio > targetRatio) {
+        cropWidth = sourceHeight * targetRatio;
+        cropX = (sourceWidth - cropWidth) / 2;
+      } else if (sourceRatio < targetRatio) {
+        cropHeight = sourceWidth / targetRatio;
+        cropY = (sourceHeight - cropHeight) / 2;
+      }
+
+      canvas.width = 768;
+      canvas.height = 1024;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-        setScanImageBase64(dataUrl);
-        setScanResult(null);
-        setScanSkipWarning(false);
-        setAdminOverrideDuplicateSerial(false);
-        stopWebcam();
-        
-        // Auto-run OCR on camera grab
-        runGeminiImageOcr(dataUrl);
+        applyCapturedImageForIntake(dataUrl, { stopCamera: true });
       }
     }
   };
@@ -318,52 +421,337 @@ export default function VolunteerPortal({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const mime = String(file.type || '').toLowerCase();
+    const isHeicLike = mime.includes('heic') || mime.includes('heif') || /\.(heic|heif)$/i.test(file.name || '');
+
     setScanResult(null);
     setScanSkipWarning(false);
     setAdminOverrideDuplicateSerial(false);
+    setBarcodeHints([]);
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const dataUrl = reader.result as string;
-      setScanImageBase64(dataUrl);
-      
-      // Auto-run OCR on file select
-      runGeminiImageOcr(dataUrl);
-    };
-    reader.readAsDataURL(file);
+    const compressImageDataUrl = (dataUrl: string, maxEdgePx = 1800, jpegQuality = 0.86) => new Promise<string>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const srcWidth = img.width || 1;
+        const srcHeight = img.height || 1;
+        const scale = Math.min(1, maxEdgePx / Math.max(srcWidth, srcHeight));
+        const outWidth = Math.max(1, Math.round(srcWidth * scale));
+        const outHeight = Math.max(1, Math.round(srcHeight * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = outWidth;
+        canvas.height = outHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, outWidth, outHeight);
+        ctx.drawImage(img, 0, 0, outWidth, outHeight);
+        resolve(canvas.toDataURL('image/jpeg', jpegQuality));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+
+    const blobToDataUrl = (blob: Blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Failed reading image blob'));
+      reader.readAsDataURL(blob);
+    });
+
+    let uploadDataUrl = '';
+    try {
+      if (isHeicLike) {
+        const heic2any = (await import('heic2any')).default as (
+          options: { blob: Blob; toType: string; quality?: number }
+        ) => Promise<Blob | Blob[]>;
+        const converted = await heic2any({
+          blob: file,
+          toType: 'image/jpeg',
+          quality: 0.9
+        });
+        const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
+        uploadDataUrl = await blobToDataUrl(convertedBlob);
+      } else {
+        uploadDataUrl = await blobToDataUrl(file);
+      }
+    } catch (error) {
+      console.error('HEIC conversion failed:', error);
+      alert('Unable to process this HEIC image. Please retry with another photo.');
+      e.target.value = '';
+      return;
+    }
+
+    const optimizedDataUrl = await compressImageDataUrl(uploadDataUrl);
+    applyCapturedImageForIntake(optimizedDataUrl);
+    // Allow selecting the same image file again on retry.
+    e.target.value = '';
   };
 
-  const runGeminiImageOcr = async (imageOverride?: string) => {
-    const imgToUse = imageOverride || scanImageBase64;
-    if (!imgToUse) return;
+  const analyzeLabelForBarcodeMetadata = async (imageDataUrl: string) => {
     setIsScanning(true);
-    setScanResult(null);
-    setScanSkipWarning(false);
-    setAdminOverrideDuplicateSerial(false);
-
     try {
-      const res = await fetch('/api/disks/scan-label', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: imgToUse, imageName: 'label.jpg' })
+      const BarcodeDetectorCtor = (window as any).BarcodeDetector;
+      if (!BarcodeDetectorCtor) {
+        setBarcodeHints(['Barcode detection is not available in this browser context.']);
+        setScanResult({
+          success: true,
+          data: {
+            hd_manufacturer: 'N/A',
+            hd_model: 'N/A',
+            hd_serial: 'N/A'
+          }
+        });
+        return;
+      }
+
+      const preferredFormats = ['code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e', 'itf', 'codabar', 'qr_code', 'data_matrix'];
+      let supportedFormats: string[] = preferredFormats;
+      if (typeof BarcodeDetectorCtor.getSupportedFormats === 'function') {
+        try {
+          const maybeFormats = await BarcodeDetectorCtor.getSupportedFormats();
+          if (Array.isArray(maybeFormats)) {
+            const filtered = maybeFormats.filter((f: string) => preferredFormats.includes(f));
+            supportedFormats = filtered.length ? filtered : preferredFormats;
+          }
+        } catch {
+          supportedFormats = preferredFormats;
+        }
+      }
+      const detector = new BarcodeDetectorCtor({
+        formats: supportedFormats.length ? supportedFormats : preferredFormats
       });
 
-      if (res.ok) {
-        const responseData = await res.json();
-        setScanResult(responseData);
-        setDiskForm(prev => ({
-          ...prev,
-          hd_manufacturer: responseData.data.hd_manufacturer,
-          hd_model: responseData.data.hd_model,
-          hd_serial: responseData.data.hd_serial,
-          hd_size: responseData.data.hd_size,
-          hd_speed: responseData.data.hd_speed
-        }));
-      } else {
-        alert('OCR engine reported an index exception or credentials failure.');
+      const sourceImage = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not decode upload image for barcode scan'));
+        img.src = imageDataUrl;
+      });
+
+      const maxEdgePx = 1800;
+      const baseScale = Math.min(1, maxEdgePx / Math.max(sourceImage.width, sourceImage.height));
+      const baseWidth = Math.max(1, Math.round(sourceImage.width * baseScale));
+      const baseHeight = Math.max(1, Math.round(sourceImage.height * baseScale));
+      const baseCanvas = document.createElement('canvas');
+      baseCanvas.width = baseWidth;
+      baseCanvas.height = baseHeight;
+      const baseCtx = baseCanvas.getContext('2d');
+      if (!baseCtx) {
+        setBarcodeHints(['Unable to process barcode frame.']);
+        setScanResult({
+          success: true,
+          data: {
+            hd_manufacturer: 'N/A',
+            hd_model: 'N/A',
+            hd_serial: 'N/A'
+          }
+        });
+        return;
       }
-    } catch (err) {
-      alert('Internal connection failed during label scan.');
+      baseCtx.drawImage(sourceImage, 0, 0, baseWidth, baseHeight);
+
+      const buildContrastVariant = (canvas: HTMLCanvasElement) => {
+        const out = document.createElement('canvas');
+        out.width = canvas.width;
+        out.height = canvas.height;
+        const outCtx = out.getContext('2d');
+        if (!outCtx) return canvas;
+        outCtx.drawImage(canvas, 0, 0);
+        const frame = outCtx.getImageData(0, 0, out.width, out.height);
+        const pixels = frame.data;
+        const contrast = 1.55;
+        const intercept = 128 * (1 - contrast);
+        for (let i = 0; i < pixels.length; i += 4) {
+          const luminance = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+          const boosted = Math.max(0, Math.min(255, (luminance * contrast) + intercept));
+          pixels[i] = boosted;
+          pixels[i + 1] = boosted;
+          pixels[i + 2] = boosted;
+        }
+        outCtx.putImageData(frame, 0, 0);
+        return out;
+      };
+
+      const rotateCanvas = (canvas: HTMLCanvasElement, degrees: 90 | 180 | 270) => {
+        const out = document.createElement('canvas');
+        const outCtx = out.getContext('2d');
+        if (!outCtx) return canvas;
+
+        if (degrees === 180) {
+          out.width = canvas.width;
+          out.height = canvas.height;
+          outCtx.translate(out.width, out.height);
+          outCtx.rotate(Math.PI);
+        } else if (degrees === 90) {
+          out.width = canvas.height;
+          out.height = canvas.width;
+          outCtx.translate(out.width, 0);
+          outCtx.rotate(Math.PI / 2);
+        } else {
+          out.width = canvas.height;
+          out.height = canvas.width;
+          outCtx.translate(0, out.height);
+          outCtx.rotate(-Math.PI / 2);
+        }
+
+        outCtx.drawImage(canvas, 0, 0);
+        return out;
+      };
+
+      const scanVariants: HTMLCanvasElement[] = [];
+      const seenSizes = new Set<string>();
+      const pushVariant = (canvas: HTMLCanvasElement) => {
+        const key = `${canvas.width}x${canvas.height}:${scanVariants.length}`;
+        if (!seenSizes.has(key)) {
+          seenSizes.add(key);
+          scanVariants.push(canvas);
+        }
+      };
+
+      pushVariant(baseCanvas);
+      pushVariant(buildContrastVariant(baseCanvas));
+      pushVariant(rotateCanvas(baseCanvas, 90));
+      pushVariant(rotateCanvas(baseCanvas, 180));
+      pushVariant(rotateCanvas(baseCanvas, 270));
+      pushVariant(buildContrastVariant(rotateCanvas(baseCanvas, 90)));
+      pushVariant(buildContrastVariant(rotateCanvas(baseCanvas, 270)));
+
+      const rawValueSet = new Set<string>();
+      const rawValueFrequency = new Map<string, number>();
+      for (const variant of scanVariants) {
+        try {
+          const detected = await detector.detect(variant);
+          for (const item of detected || []) {
+            const value = String((item as any)?.rawValue || '').trim();
+            if (value) {
+              rawValueSet.add(value);
+              rawValueFrequency.set(value, (rawValueFrequency.get(value) || 0) + 1);
+            }
+          }
+        } catch {
+          // Continue scanning other variants.
+        }
+      }
+
+      const rawValues = Array.from(rawValueSet);
+
+      if (!rawValues.length) {
+        setBarcodeHints(['No barcode payloads decoded from this image.']);
+        setScanResult({
+          success: true,
+          data: {
+            hd_manufacturer: 'N/A',
+            hd_model: 'N/A',
+            hd_serial: 'N/A'
+          }
+        });
+        return;
+      }
+
+      const upperRawValues = rawValues.map(v => v.toUpperCase());
+      const combined = rawValues.join(' | ').toUpperCase();
+
+      const manufacturerSignals = [
+        { value: 'Seagate', patterns: ['SEAGATE'] },
+        { value: 'Western Digital', patterns: ['WESTERN DIGITAL', 'WDC', 'WD'] },
+        { value: 'Toshiba', patterns: ['TOSHIBA'] },
+        { value: 'Hitachi', patterns: ['HITACHI', 'HGST'] },
+        { value: 'Samsung', patterns: ['SAMSUNG'] }
+      ];
+
+      const manufacturerMatches = manufacturerSignals
+        .map(signal => ({
+          value: signal.value,
+          matches: upperRawValues.filter(raw => signal.patterns.some(pattern => raw.includes(pattern))).length
+        }))
+        .filter(entry => entry.matches > 0)
+        .sort((a, b) => b.matches - a.matches);
+
+      const manufacturer = manufacturerMatches[0]?.value || '';
+      const manufacturerConfidence = manufacturerMatches.length === 1
+        ? Math.min(0.95, 0.45 + (manufacturerMatches[0].matches * 0.2))
+        : 0.3;
+
+      const modelFromToken = combined.match(/\b(ST\d{4,}[A-Z0-9-]*)\b|\b(WD[A-Z0-9-]{5,})\b|\b(HDS[A-Z0-9-]{4,})\b|\b(MQ\d{2,}[A-Z0-9-]*)\b/i);
+      const labeledModel = combined.match(/\bMODEL\s*[:#-]?\s*([A-Z0-9-]{5,})\b/i);
+      const model = (modelFromToken?.[0] || labeledModel?.[1] || '').trim();
+
+      const modelMentions = model
+        ? upperRawValues.filter(raw => raw.includes(model.toUpperCase())).length
+        : 0;
+      const modelConfidence = !model
+        ? 0
+        : labeledModel
+          ? Math.min(0.95, 0.65 + (modelMentions * 0.1))
+          : modelMentions >= 2
+            ? 0.65
+            : 0.45;
+
+      const labeledSerial = combined.match(/\b(SN|S\/N|SERIAL)\s*[:#-]?\s*([A-Z0-9-]{6,24})\b/i);
+      const serialCandidate = combined
+        .split(/[^A-Z0-9-]+/)
+        .filter((token) => token.length >= 8 && token.length <= 24 && /[A-Z]/.test(token) && /\d/.test(token))
+        .sort((a, b) => b.length - a.length)[0] || '';
+      const serial = (labeledSerial?.[2] || serialCandidate || '').trim();
+
+      const serialMentions = serial
+        ? upperRawValues.filter(raw => raw.includes(serial.toUpperCase())).length
+        : 0;
+      const serialConfidence = !serial
+        ? 0
+        : labeledSerial
+          ? Math.min(0.98, 0.7 + (serialMentions * 0.1))
+          : serialMentions >= 2
+            ? 0.65
+            : 0.45;
+
+      const barcodeResultData = {
+        hd_manufacturer: manufacturerConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? manufacturer : 'N/A',
+        hd_model: modelConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? model : 'N/A',
+        hd_serial: serialConfidence >= BARCODE_CONFIDENCE_THRESHOLD ? serial : 'N/A'
+      };
+
+      setScanResult({
+        success: true,
+        data: barcodeResultData
+      });
+
+      const hints: string[] = [];
+      if (manufacturer) hints.push(`Manufacturer from barcode: ${manufacturer} (${Math.round(manufacturerConfidence * 100)}%)`);
+      if (model) hints.push(`Model from barcode: ${model} (${Math.round(modelConfidence * 100)}%)`);
+      if (serial) hints.push(`Serial from barcode: ${serial} (${Math.round(serialConfidence * 100)}%)`);
+      if (barcodeResultData.hd_manufacturer === 'N/A') hints.push('Manufacturer confidence below 50% -> kept as N/A');
+      if (barcodeResultData.hd_model === 'N/A') hints.push('Model confidence below 50% -> kept as N/A');
+      if (barcodeResultData.hd_serial === 'N/A') hints.push('Serial confidence below 50% -> kept as N/A');
+      hints.push(`Barcode pass count: ${scanVariants.length}`);
+      hints.push(`Decoded values: ${rawValues.length}`);
+      hints.push(...rawValues.slice(0, 2).map(v => `Decoded barcode: ${v}`));
+      setBarcodeHints(hints);
+      applyExtractedDriveMetadata({
+        hd_manufacturer: manufacturer,
+        hd_model: model,
+        hd_serial: serial
+      }, {
+        hd_manufacturer: manufacturerConfidence,
+        hd_model: modelConfidence,
+        hd_serial: serialConfidence
+      });
+    } catch (error) {
+      console.warn('Barcode metadata extraction failed:', error);
+      setBarcodeHints(['Barcode extraction failed for this image.']);
+      setScanResult({
+        success: true,
+        data: {
+          hd_manufacturer: 'N/A',
+          hd_model: 'N/A',
+          hd_serial: 'N/A'
+        }
+      });
     } finally {
       setIsScanning(false);
     }
@@ -372,8 +760,10 @@ export default function VolunteerPortal({
   const handleLoadMockLabel = (modelPreset: 'seagate_8tb' | 'wd_6tb' | 'mismatched_unrecognized') => {
     const fakeBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUHMgYVDC8m7V6zOwAAABl0RVh0Q29tbWVudABDcmVhdGVkIHdpdGggR0lNUO9kJW4AAAA/SURBVGje7cxBAQAADAIg9E+1ZHAHe0gGZECYfIAsWvYIskCWARkQJh8gixb9giwiYGaArP4BsmgZZIEMAzIgYpIsCqY7yQAAAABJRU5ErkJggg==";
     setScanImageBase64(fakeBase64);
+    setCapturedImageDataUrl(fakeBase64);
     setScanSkipWarning(false);
     setAdminOverrideDuplicateSerial(false);
+    setBarcodeHints([]);
     
     if (modelPreset === 'seagate_8tb') {
       setScanResult({
@@ -562,6 +952,9 @@ export default function VolunteerPortal({
   };
 
   const handlePOSIntakeSubmit = async () => {
+        const effectiveDiskId = diskForm.id?.trim() ? diskForm.id : generateDiskID(disks);
+        const effectiveSerial = diskForm.hd_serial?.trim() ? diskForm.hd_serial.trim() : 'N/A';
+
         const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
         if (selectedSource && !meetsSourceMinimum(selectedSource, diskForm.hd_size)) {
           const minTB = getSourceMinSizeTB(selectedSource);
@@ -569,16 +962,17 @@ export default function VolunteerPortal({
           return;
         }
 
-    if (!diskForm.id || !diskForm.hd_serial || !diskForm.source_requested_id) {
-      alert("Missing required fields for Registration.");
+    if (!diskForm.source_requested_id) {
+      alert("Please select a source before registration.");
       return;
     }
 
-    const serialExists = diskForm.hd_serial 
-      ? disks.some(d => d.hd_serial.toLowerCase().trim() === diskForm.hd_serial.toLowerCase().trim() && d.hd_serial.trim() !== '') 
+    const serialForComparison = effectiveSerial.toLowerCase().trim();
+    const serialExists = serialForComparison && serialForComparison !== 'n/a'
+      ? disks.some(d => d.hd_serial.toLowerCase().trim() === serialForComparison && d.hd_serial.trim() !== '' && d.hd_serial.toLowerCase().trim() !== 'n/a')
       : false;
     if (serialExists && !(currentUser?.role === 'admin' && adminOverrideDuplicateSerial)) {
-      alert("Redundant Ingestion Guard is active. Admin Authorization required to duplicate ingestion.");
+      // Guard is surfaced in Step 1 Capture screen; keep backend submit blocked as a fallback.
       return;
     }
 
@@ -586,9 +980,11 @@ export default function VolunteerPortal({
     try {
       const diskPayload = {
         ...diskForm,
+        id: effectiveDiskId,
+        hd_serial: effectiveSerial,
         received_time: new Date().toISOString(),
         status: 'received',
-        hd_image: scanImageBase64 || null
+        hd_image: capturedImageDataUrl || diskForm.hd_image || scanImageBase64 || null
       };
 
       const diskRes = await fetch('/api/disks', {
@@ -728,12 +1124,53 @@ export default function VolunteerPortal({
            d.hd_manufacturer.toLowerCase().includes(q);
   });
 
+  const RETURN_PAGE_SIZE = 6;
+  const REPRINT_PAGE_SIZE = 6;
+  const returnTotalPages = Math.max(1, Math.ceil(filteredForReturn.length / RETURN_PAGE_SIZE));
+  const reprintTotalPages = Math.max(1, Math.ceil(filteredForReprint.length / REPRINT_PAGE_SIZE));
+  const safeReturnPage = Math.min(returnPage, returnTotalPages);
+  const safeReprintPage = Math.min(reprintPage, reprintTotalPages);
+  const pagedForReturn = filteredForReturn.slice((safeReturnPage - 1) * RETURN_PAGE_SIZE, safeReturnPage * RETURN_PAGE_SIZE);
+  const pagedForReprint = filteredForReprint.slice((safeReprintPage - 1) * REPRINT_PAGE_SIZE, safeReprintPage * REPRINT_PAGE_SIZE);
+
+  useEffect(() => {
+    setReturnPage(1);
+  }, [returnDiskSearchQuery]);
+
+  useEffect(() => {
+    setReprintPage(1);
+  }, [reprintSearchQuery]);
+
+  useEffect(() => {
+    if (returnPage !== safeReturnPage) {
+      setReturnPage(safeReturnPage);
+    }
+  }, [returnPage, safeReturnPage]);
+
+  useEffect(() => {
+    if (reprintPage !== safeReprintPage) {
+      setReprintPage(safeReprintPage);
+    }
+  }, [reprintPage, safeReprintPage]);
+
+  useEffect(() => {
+    if (webcamError) {
+      setCaptureInfoTab('errors');
+      return;
+    }
+    if (isScanning || barcodeHints.length > 0 || scanResult) {
+      setCaptureInfoTab('barcode');
+      return;
+    }
+  }, [webcamError, barcodeHints, isScanning, scanResult]);
+
   const handleResetIntakeForm = () => {
+    stopWebcam();
     setDiskForm({
       id: '',
-      hd_manufacturer: 'Seagate',
-      hd_model: '',
-      hd_serial: '',
+      hd_manufacturer: 'N/A',
+      hd_model: 'N/A',
+      hd_serial: 'N/A',
       hd_size: '8TB',
       hd_speed: '7200 RPM',
       source_requested_id: '',
@@ -742,10 +1179,321 @@ export default function VolunteerPortal({
       hd_image: ''
     });
     setScanImageBase64(null);
+    setCapturedImageDataUrl('');
     setScanResult(null);
     setScanSkipWarning(false);
+    setBarcodeHints([]);
     setIntakeStep(1);
     setIntakeSuccessRecord(null);
+    setShowIntakePreview(false);
+  };
+
+  const escapeHtml = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  const handleThermalPrint = async () => {
+    if (!printedTicketDisk) return;
+
+    if (!tagPrintCardRef.current || !ticketPrintCardRef.current) {
+      alert('Print layout is not ready yet. Please try again.');
+      return;
+    }
+
+    let tagPng = '';
+    let ticketPng = '';
+    try {
+      const tagRect = tagPrintCardRef.current.getBoundingClientRect();
+      const ticketRect = ticketPrintCardRef.current.getBoundingClientRect();
+
+      tagPng = await toPng(tagPrintCardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        skipAutoScale: true,
+        width: Math.max(1, Math.round(tagRect.width)),
+        height: Math.max(1, Math.round(tagRect.height)),
+        canvasWidth: Math.max(1, Math.round(tagRect.width)),
+        canvasHeight: Math.max(1, Math.round(tagRect.height)),
+        style: {
+          margin: '0',
+          boxShadow: 'none'
+        },
+        backgroundColor: '#ffffff'
+      });
+      ticketPng = await toPng(ticketPrintCardRef.current, {
+        cacheBust: true,
+        pixelRatio: 2,
+        skipAutoScale: true,
+        width: Math.max(1, Math.round(ticketRect.width)),
+        height: Math.max(1, Math.round(ticketRect.height)),
+        canvasWidth: Math.max(1, Math.round(ticketRect.width)),
+        canvasHeight: Math.max(1, Math.round(ticketRect.height)),
+        style: {
+          margin: '0',
+          boxShadow: 'none'
+        },
+        backgroundColor: '#ecfdf5'
+      });
+    } catch (err) {
+      console.error('Failed to generate print images:', err);
+      alert('Could not build label images for printing. Please retry.');
+      return;
+    }
+
+    const rotateImageClockwise = (dataUrl: string) => new Promise<string>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.height;
+        canvas.height = img.width;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable'));
+          return;
+        }
+        ctx.translate(canvas.width, 0);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Failed to load label image for rotation'));
+      img.src = dataUrl;
+    });
+
+    const trimVisibleMargins = (dataUrl: string) => new Promise<string>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable for trim'));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const { data, width, height } = imageData;
+
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const alpha = data[i + 3];
+            // Keep only visible printable content (non-transparent and not near-white).
+            if (alpha > 8 && !(r > 248 && g > 248 && b > 248)) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+
+        if (maxX < minX || maxY < minY) {
+          // Fallback for mostly-white images: preserve original rather than over-cropping.
+          resolve(dataUrl);
+          return;
+        }
+
+        const croppedWidth = maxX - minX + 1;
+        const croppedHeight = maxY - minY + 1;
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = croppedWidth;
+        outCanvas.height = croppedHeight;
+        const outCtx = outCanvas.getContext('2d');
+        if (!outCtx) {
+          reject(new Error('Canvas context unavailable for cropped output'));
+          return;
+        }
+
+        outCtx.drawImage(canvas, minX, minY, croppedWidth, croppedHeight, 0, 0, croppedWidth, croppedHeight);
+        resolve(outCanvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Failed to load label image for visible-bound trim'));
+      img.src = dataUrl;
+    });
+
+    const normalizeForThermalWidth = (dataUrl: string, targetWidthPx = 496) => new Promise<string>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        if (!img.width || !img.height) {
+          reject(new Error('Invalid label dimensions for thermal normalization'));
+          return;
+        }
+
+        const scale = targetWidthPx / img.width;
+        const targetHeightPx = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidthPx;
+        canvas.height = targetHeightPx;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable for thermal normalization'));
+          return;
+        }
+
+        // Paint opaque white first so thermal drivers do not reinterpret transparent edges.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, targetWidthPx, targetHeightPx);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Failed to load label image for thermal normalization'));
+      img.src = dataUrl;
+    });
+
+    const applyPrintCalibrationShift = (dataUrl: string, shiftYmm = 0, shiftXmm = 0) => new Promise<string>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable for print calibration shift'));
+          return;
+        }
+
+        // Requested calibration: move print content toward top of rotated image (left on ticket).
+        const thermalDpi = 203;
+        const requestedShiftYpx = Math.round((shiftYmm / 25.4) * thermalDpi);
+        const requestedShiftXpx = Math.round((shiftXmm / 25.4) * thermalDpi);
+        // Keep content shift as a fine adjustment only; large shifts clip most of the label image.
+        const maxMagnitudeYpx = Math.floor(img.height * 0.16);
+        const maxMagnitudeXpx = Math.floor(img.width * 0.95);
+        const shiftYpx = Math.max(-maxMagnitudeYpx, Math.min(requestedShiftYpx, maxMagnitudeYpx));
+        const shiftXpx = Math.max(-maxMagnitudeXpx, Math.min(requestedShiftXpx, maxMagnitudeXpx));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Positive X shift moves content left; positive Y shift moves content up.
+        ctx.drawImage(img, -shiftXpx, -shiftYpx, img.width, img.height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => reject(new Error('Failed to load label image for print calibration'));
+      img.src = dataUrl;
+    });
+
+    let rotatedTagPng = '';
+    let rotatedTicketPng = '';
+    let finalTagPng = '';
+    let finalTicketPng = '';
+    try {
+      rotatedTagPng = await rotateImageClockwise(tagPng);
+      rotatedTicketPng = await rotateImageClockwise(ticketPng);
+      const trimmedTagPng = await trimVisibleMargins(rotatedTagPng);
+      const trimmedTicketPng = await trimVisibleMargins(rotatedTicketPng);
+      const normalizedTagPng = await normalizeForThermalWidth(trimmedTagPng);
+      const normalizedTicketPng = await normalizeForThermalWidth(trimmedTicketPng);
+      finalTagPng = await applyPrintCalibrationShift(normalizedTagPng, printContentShiftMm, printContentShiftXMm);
+      finalTicketPng = await applyPrintCalibrationShift(normalizedTicketPng, printContentShiftMm, printContentShiftXMm);
+    } catch (err) {
+      console.error('Failed to prepare print images:', err);
+      alert('Could not prepare label images for printing. Please retry.');
+      return;
+    }
+
+    const printWindow = window.open('', 'ddv-thermal-print-images', 'width=420,height=980');
+    if (!printWindow) {
+      alert('Unable to open print window. Please allow popups and try again.');
+      return;
+    }
+
+    const printTopOffsetMm = printSheetOffsetMm;
+
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DDV Labels</title>
+  <style>
+    @page {
+      size: 62mm auto;
+      margin: 0;
+    }
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 62mm;
+      min-width: 62mm;
+      max-width: 62mm;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .sheet {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      position: relative;
+      left: ${printSheetOffsetXMm}mm;
+      top: ${printTopOffsetMm}mm;
+    }
+    .label {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      break-after: page;
+      page-break-after: always;
+    }
+    .label:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .label img {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <section class="label"><img src="${escapeHtml(finalTagPng)}" alt="Tag" /></section>
+    <section class="label"><img src="${escapeHtml(finalTicketPng)}" alt="Ticket" /></section>
+  </div>
+  <script>
+    window.addEventListener('load', function () {
+      window.focus();
+      setTimeout(function () {
+        window.print();
+      }, 80);
+      window.addEventListener('afterprint', function () {
+        window.close();
+      });
+    });
+  </script>
+</body>
+</html>`;
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
   return (
@@ -761,7 +1509,7 @@ export default function VolunteerPortal({
         <div className="flex bg-[#0E0E10] border border-[#2A2A2E] p-0.5 rounded-lg self-stretch sm:self-auto shrink-0 shadow-inner">
           <button
             onClick={() => { setPosTab('intake'); }}
-            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-initial min-h-12 flex items-center justify-center gap-1.5 px-4 py-3 text-sm font-bold rounded-md transition-all cursor-pointer ${
               posTab === 'intake' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
@@ -770,7 +1518,7 @@ export default function VolunteerPortal({
           </button>
           <button
             onClick={() => { setPosTab('edit'); }}
-            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-initial min-h-12 flex items-center justify-center gap-1.5 px-4 py-3 text-sm font-bold rounded-md transition-all cursor-pointer ${
               posTab === 'edit' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
@@ -779,7 +1527,7 @@ export default function VolunteerPortal({
           </button>
           <button
             onClick={() => { setPosTab('return'); }}
-            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-initial min-h-12 flex items-center justify-center gap-1.5 px-4 py-3 text-sm font-bold rounded-md transition-all cursor-pointer ${
               posTab === 'return' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
@@ -788,7 +1536,7 @@ export default function VolunteerPortal({
           </button>
           <button
             onClick={() => { setPosTab('reprint'); }}
-            className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
+            className={`flex-1 sm:flex-initial min-h-12 flex items-center justify-center gap-1.5 px-4 py-3 text-sm font-bold rounded-md transition-all cursor-pointer ${
               posTab === 'reprint' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
@@ -826,7 +1574,7 @@ export default function VolunteerPortal({
                 <button
                   type="submit"
                   disabled={isLookupLoading}
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-blue-500 disabled:opacity-50"
+                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50"
                 >
                   {isLookupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
                   Lookup
@@ -966,7 +1714,7 @@ export default function VolunteerPortal({
                       type="button"
                       disabled={isLookupSaving}
                       onClick={handleLookupSave}
-                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                      className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
                     >
                       {isLookupSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                       Save corrections
@@ -986,9 +1734,9 @@ export default function VolunteerPortal({
             {intakeStep === 1 && (
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
-                  <h4 className="text-sm font-bold text-slate-200">Step 1: Parse Hard Drive Label Frame</h4>
+                  <h4 className="text-sm font-bold text-slate-200">Step 1: Capture Drive Information</h4>
                   <div className="flex items-center gap-2">
-                    {(scanImageBase64 || scanResult || diskForm.hd_serial || diskForm.hd_model) && (
+                    {(isWebcamActive || scanImageBase64 || scanResult || diskForm.hd_serial || diskForm.hd_model) && (
                       <button
                         type="button"
                         onClick={handleResetIntakeForm}
@@ -1001,169 +1749,221 @@ export default function VolunteerPortal({
                   </div>
                 </div>
 
-                <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-5 text-center space-y-4">
+                <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-4 text-center space-y-3">
                   <p className="text-xs text-slate-400 leading-relaxed">
                     Deploy real-time Gemini AI vision to automatically extract model codes, storage capacity, and serial keys from physical hard drive stickers:
                   </p>
 
                   {/* Webcam Interface */}
                   {isWebcamActive ? (
-                    <div className="bg-[#111113] border border-blue-900/40 rounded-xl overflow-hidden p-4 space-y-4 max-w-md mx-auto">
-                      <div className="relative bg-black rounded-lg aspect-video overflow-hidden border border-[#2A2A2E] flex items-center justify-center">
-                        {isCameraSimulated ? (
-                          <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-4 select-none">
-                            <div className="w-20 h-20 bg-[#111113] border border-blue-500/30 rounded-lg shadow-inner flex flex-col items-center justify-center relative overflow-hidden">
-                              <div className="absolute inset-x-0 top-0 h-0.5 bg-blue-500 shadow-[0_0_8px_#3b82f6] animate-bounce animate-duration-3000" style={{ animationDuration: '3s' }} />
-                              <span className="text-3xl">📀</span>
-                              <span className="text-[8px] font-mono text-blue-400 mt-1 uppercase font-black tracking-widest">INGEST CAM</span>
-                            </div>
-                            <div className="mt-3 text-center space-y-1">
-                              <p className="text-[10px] font-mono text-emerald-400 font-extrabold uppercase tracking-wider">Simulated Scanner Active</p>
-                              <p className="text-[9px] text-slate-500">Press Capture to parse mock Seagate 8TB</p>
-                            </div>
-                            <video ref={videoRef} className="hidden" />
-                          </div>
-                        ) : (
-                          <>
-                            <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 border-2 border-dashed border-blue-500/40 pointer-events-none m-6 rounded flex items-center justify-center">
-                              <div className="text-[10px] bg-blue-950/80 text-blue-400 font-mono px-2 py-1 rounded border border-blue-900/50 uppercase tracking-widest animate-pulse">
-                                Align Hard Drive Sticker Label
+                    <div className="bg-[#111113] border border-blue-900/40 rounded-xl overflow-hidden p-3 max-w-[500px] mx-auto">
+                      <div className="flex items-start gap-2.5">
+                        <div className="flex-1 text-left">
+                          <div className="relative bg-black rounded-lg border border-[#2A2A2E] flex items-center justify-center w-full max-w-[235px] h-[270px] mx-auto sm:mx-0">
+                            {isCameraSimulated ? (
+                              <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center p-4 select-none">
+                                <div className="w-20 h-20 bg-[#111113] border border-blue-500/30 rounded-lg shadow-inner flex flex-col items-center justify-center relative overflow-hidden">
+                                  <div className="absolute inset-x-0 top-0 h-0.5 bg-blue-500 shadow-[0_0_8px_#3b82f6] animate-bounce animate-duration-3000" style={{ animationDuration: '3s' }} />
+                                  <span className="text-3xl">📀</span>
+                                  <span className="text-[8px] font-mono text-blue-400 mt-1 uppercase font-black tracking-widest">INGEST CAM</span>
+                                </div>
+                                <div className="mt-3 text-center space-y-1">
+                                  <p className="text-[10px] font-mono text-emerald-400 font-extrabold uppercase tracking-wider">Simulated Scanner Active</p>
+                                  <p className="text-[9px] text-slate-500">Press Capture to parse mock Seagate 8TB</p>
+                                </div>
+                                <video ref={videoRef} className="hidden" />
                               </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                      
-                      {webcamError && (
-                        <p className="text-xs text-red-400 bg-red-950/20 border border-red-900/30 p-2 rounded text-left">
-                          {webcamError}
-                        </p>
-                      )}
+                            ) : (
+                              <>
+                                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 border-2 border-dashed border-blue-500/40 pointer-events-none m-4 rounded flex items-center justify-center">
+                                  <div className="text-[10px] bg-blue-950/80 text-blue-400 font-mono px-2 py-1 rounded border border-blue-900/50 uppercase tracking-widest animate-pulse">
+                                    Align Vertical Label In Frame
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
 
-                      <div className="flex gap-2 justify-center">
-                        <button
-                          type="button"
-                          onClick={captureWebcam}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg shadow cursor-pointer transition flex items-center gap-1.5"
-                        >
-                          <Camera className="h-3.5 w-3.5" />
-                          Capture Sticker Label
-                        </button>
-                        <button
-                          type="button"
-                          onClick={stopWebcam}
-                          className="px-4 py-2 bg-[#16161A] hover:bg-[#1D1D22] border border-slate-700 text-xs font-semibold text-slate-300 hover:text-white rounded-lg cursor-pointer transition"
-                        >
-                          Cancel
-                        </button>
+                        <div className="w-56 min-h-[270px] flex flex-col justify-between gap-2">
+                          <div className="border border-[#2A2A2E] rounded-lg bg-[#0E0E10] p-2">
+                            <div className="grid grid-cols-3 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setCaptureInfoTab('errors')}
+                                className={`min-h-8 px-1.5 py-1 text-[10px] font-bold rounded ${captureInfoTab === 'errors' ? 'bg-rose-900/40 text-rose-200 border border-rose-700/50' : 'bg-[#111113] text-slate-400 border border-[#2A2A2E]'}`}
+                              >
+                                Errors
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCaptureInfoTab('barcode')}
+                                className={`min-h-8 px-1.5 py-1 text-[10px] font-bold rounded ${captureInfoTab === 'barcode' ? 'bg-blue-900/40 text-blue-200 border border-blue-700/50' : 'bg-[#111113] text-slate-400 border border-[#2A2A2E]'}`}
+                              >
+                                Barcode
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCaptureInfoTab('ocr')}
+                                className={`min-h-8 px-1.5 py-1 text-[10px] font-bold rounded ${captureInfoTab === 'ocr' ? 'bg-emerald-900/40 text-emerald-200 border border-emerald-700/50' : 'bg-[#111113] text-slate-400 border border-[#2A2A2E]'}`}
+                              >
+                                OCR (Paused)
+                              </button>
+                            </div>
+
+                            <div className="mt-2 h-36 overflow-y-auto pr-1 text-xs">
+                              {captureInfoTab === 'errors' && (
+                                webcamError ? (
+                                  <div className="text-red-300 bg-red-950/20 border border-red-900/40 p-2.5 rounded-md flex items-start gap-2">
+                                    <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0 text-red-400" />
+                                    <span>{webcamError}</span>
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-400 bg-[#111113] border border-[#2A2A2E] p-2.5 rounded-md">No capture errors.</div>
+                                )
+                              )}
+
+                              {captureInfoTab === 'barcode' && (
+                                barcodeHints.length > 0 ? (
+                                  <div className="text-blue-200 bg-blue-950/20 border border-blue-900/40 p-2.5 rounded-md space-y-1">
+                                    <div className="font-bold text-blue-300 uppercase tracking-wider text-[10px]">Barcode Review</div>
+                                    {barcodeHints.slice(0, 5).map((hint, idx) => (
+                                      <div key={`${hint}-${idx}`} className="leading-snug">{hint}</div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-400 bg-[#111113] border border-[#2A2A2E] p-2.5 rounded-md">No barcode data found yet.</div>
+                                )
+                              )}
+
+                              {captureInfoTab === 'ocr' && (
+                                <div className="text-slate-300 bg-[#111113] border border-[#2A2A2E] p-2.5 rounded-md">
+                                  OCR extraction is paused. Intake currently uses barcode-only decoding.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={captureWebcam}
+                            className="min-h-12 px-4 py-3 bg-blue-600 hover:bg-blue-500 text-sm font-bold text-white rounded-lg shadow cursor-pointer transition flex items-center justify-center gap-1.5"
+                          >
+                            <Camera className="h-3.5 w-3.5" />
+                            Capture
+                          </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-wrap gap-2 justify-center items-center">
-                      <button
-                        type="button"
-                        onClick={startWebcam}
-                        className="inline-flex items-center gap-2 px-3.5 py-1.5 border border-blue-900/50 bg-blue-950/30 text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-950/50 cursor-pointer shadow-md transition"
-                      >
-                        <Camera className="h-3.5 w-3.5" />
-                        Scan with Live Webcam...
-                      </button>
-
-                      <input type="file" accept="image/*" onChange={handleImageFileSelect} id="pos-disk-label-upload" className="hidden" />
-                      <label htmlFor="pos-disk-label-upload" className="inline-flex items-center gap-2 px-3.5 py-1.5 border border-slate-700 bg-[#16161A] text-slate-200 rounded-lg text-xs font-bold hover:bg-[#1D1D22] cursor-pointer shadow-md transition">
-                        <Upload className="h-3 w-3 text-slate-400" />
-                        Browse Physical Photo...
-                      </label>
-
-                      <button
-                        type="button"
-                        onClick={() => handleLoadMockLabel('seagate_8tb')}
-                        className="px-3 py-1.5 border border-dashed border-blue-900 bg-blue-950/20 text-blue-400 text-xs font-black rounded-lg hover:bg-blue-950/40 transition cursor-pointer"
-                      >
-                        Simulate Seagate 8TB Scan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLoadMockLabel('wd_6tb')}
-                        className="px-3 py-1.5 border border-dashed border-purple-900 bg-purple-950/20 text-purple-400 text-xs font-black rounded-lg hover:bg-purple-950/40 transition cursor-pointer"
-                      >
-                        Simulate WD 6TB Scan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLoadMockLabel('mismatched_unrecognized')}
-                        className="px-3 py-1.5 border border-dashed border-amber-900 bg-amber-950/20 text-amber-400 text-xs font-black rounded-lg hover:bg-amber-950/40 transition cursor-pointer"
-                      >
-                        Simulate Mismatched Scan
-                      </button>
-                    </div>
-                  )}
-
-                  {scanImageBase64 && (
-                    <div className="bg-[#111113] p-4 rounded-lg border border-[#2A2A2E] flex flex-col sm:flex-row items-center justify-between gap-3 text-left">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">📀</span>
-                        <div>
-                          <span className="text-xs font-semibold text-slate-200 block">Asset label photograph loaded</span>
-                          <span className="text-[9px] text-slate-500 font-mono">Simulated frame-read buffers filled</span>
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-3 max-w-5xl mx-auto text-left">
+                      <div className="bg-[#111113] border border-[#2A2A2E] rounded-xl p-3 space-y-2.5">
+                        <div className="text-[10px] font-mono font-black uppercase tracking-wider text-slate-400">Captured Drive Image + Alerts</div>
+                        <div className="w-full max-w-[220px] h-[294px] mx-auto rounded-lg border border-slate-700 bg-black/20 flex items-center justify-center overflow-hidden">
+                          {intakePreviewImage ? (
+                            <img
+                              src={intakePreviewImage}
+                              alt="Captured drive for intake review"
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="text-center text-slate-500 px-4">
+                              <div className="text-xs font-bold">No image captured yet</div>
+                              <div className="text-[10px] mt-1 font-mono">Use camera scan or browse photo to load a sticker image.</div>
+                            </div>
+                          )}
                         </div>
+
+                        {intakePreviewImage && (
+                          <div className="bg-[#0E0E10] p-2 rounded-lg border border-[#2A2A2E] text-[11px]">
+                            <div className="text-slate-200 font-semibold">Asset label photograph loaded</div>
+                            <div className="text-slate-500 font-mono text-[10px]">Image retained for assignment review and final save.</div>
+                          </div>
+                        )}
+
+                        {scanResult && getUncapturedFields(scanResult).length > 0 && !scanSkipWarning && (
+                          <div className="bg-amber-950/35 border border-amber-900/40 text-amber-200 p-2.5 rounded-lg text-xs space-y-2">
+                            <div className="font-extrabold flex items-center gap-2 text-[11px] text-amber-300 tracking-wider font-mono">
+                              <ShieldAlert className="h-4 w-4 text-amber-400" />
+                              SCAN WARNING: UNRESOLVED DRIVE COMPONENTS
+                            </div>
+                            <div className="bg-slate-900/50 p-2 rounded border border-amber-900/30 text-[11px]">
+                              Missing fields identified: <strong className="text-amber-300">{getUncapturedFields(scanResult).join(', ')}</strong>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setScanSkipWarning(true)}
+                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded text-[11px] uppercase cursor-pointer"
+                              >
+                                Force manual correction edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setScanResult(null); setScanImageBase64(null); setCapturedImageDataUrl(''); setDiskForm(prev => ({ ...prev, hd_image: '' })); }}
+                                className="px-3 py-1.5 bg-[#16161A] border border-amber-900/30 text-amber-400 rounded text-[11px] font-bold"
+                              >
+                                Discard & Rescan
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      
-                      {!scanResult && (
+
+                      <div className="grid grid-cols-1 gap-2 justify-center items-stretch">
                         <button
                           type="button"
-                          onClick={runGeminiImageOcr}
-                          disabled={isScanning}
-                          className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg cursor-pointer disabled:opacity-50 transition shadow-md"
+                          onClick={startWebcam}
+                          className="inline-flex min-h-12 items-center justify-center gap-2 px-4 py-3 border border-blue-900/50 bg-blue-950/30 text-blue-400 rounded-lg text-sm font-bold hover:bg-blue-950/50 cursor-pointer shadow-md transition"
                         >
-                          {isScanning ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Running Gemini Vision OCR...
-                            </>
-                          ) : (
-                            'Analyze with Gemini Vision'
-                          )}
+                          <Camera className="h-3.5 w-3.5" />
+                          Scan with Live Webcam...
                         </button>
-                      )}
+
+                        <input type="file" accept="image/*,.heic,.heif,image/heic,image/heif" onChange={handleImageFileSelect} id="pos-disk-label-upload" className="hidden" />
+                        <label htmlFor="pos-disk-label-upload" className="inline-flex min-h-12 items-center justify-center gap-2 px-4 py-3 border border-slate-700 bg-[#16161A] text-slate-200 rounded-lg text-sm font-bold hover:bg-[#1D1D22] cursor-pointer shadow-md transition">
+                          <Upload className="h-3 w-3 text-slate-400" />
+                          Browse Physical Photo...
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => handleLoadMockLabel('seagate_8tb')}
+                          className="min-h-12 px-4 py-3 border border-dashed border-blue-900 bg-blue-950/20 text-blue-400 text-sm font-black rounded-lg hover:bg-blue-950/40 transition cursor-pointer"
+                        >
+                          Simulate Seagate 8TB Scan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleLoadMockLabel('wd_6tb')}
+                          className="min-h-12 px-4 py-3 border border-dashed border-purple-900 bg-purple-950/20 text-purple-400 text-sm font-black rounded-lg hover:bg-purple-950/40 transition cursor-pointer"
+                        >
+                          Simulate WD 6TB Scan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleLoadMockLabel('mismatched_unrecognized')}
+                          className="min-h-12 px-4 py-3 border border-dashed border-amber-900 bg-amber-950/20 text-amber-400 text-sm font-black rounded-lg hover:bg-amber-950/40 transition cursor-pointer"
+                        >
+                          Simulate Mismatched Scan
+                        </button>
+                      </div>
                     </div>
                   )}
 
                   {scanResult && (() => {
                     const uncaptured = getUncapturedFields(scanResult);
+                    const normalizedSerial = String(diskForm.hd_serial || '').toLowerCase().trim();
+                    const duplicateSerialDetected = normalizedSerial !== ''
+                      && normalizedSerial !== 'n/a'
+                      && disks.some(d => d.hd_serial.toLowerCase().trim() === normalizedSerial && d.hd_serial.trim() !== '' && d.hd_serial.toLowerCase().trim() !== 'n/a');
+                    const duplicateNeedsAdminOverride = duplicateSerialDetected && !(currentUser?.role === 'admin' && adminOverrideDuplicateSerial);
                     if (uncaptured.length > 0 && !scanSkipWarning) {
-                      return (
-                        <div className="bg-amber-950/40 border border-amber-900/50 text-amber-200 p-4 rounded-xl text-left text-xs space-y-4 animate-fadeIn">
-                          <div className="font-extrabold flex items-center gap-2 text-[11px] text-amber-400 tracking-wider font-mono">
-                            <ShieldAlert className="h-4 w-4 text-amber-400" />
-                            SCAN WARNING: UNRESOLVED DRIVE COMPONENTS
-                          </div>
-                          <p className="text-slate-300 leading-relaxed text-[11px]">
-                            The label scanner was unable to clearly extract all physical parameters from the drive. 
-                            Some identified attributes do not align with verified specification standards.
-                          </p>
-                          <div className="bg-slate-900/50 p-3 rounded border border-amber-900/30 text-[11px]">
-                            Missing fields identified: <strong className="text-amber-300">{uncaptured.join(', ')}</strong>
-                          </div>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setScanSkipWarning(true)}
-                              className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-black rounded text-[11px] uppercase cursor-pointer"
-                            >
-                              Force manual correction edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => { setScanResult(null); setScanImageBase64(null); }}
-                              className="px-3.5 py-1.5 bg-[#16161A] border border-amber-900/30 text-amber-400 rounded text-[11px] font-bold"
-                            >
-                              Discard & Rescan
-                            </button>
-                          </div>
-                        </div>
-                      );
+                      return null;
                     }
 
                     // Otherwise show success / review form
@@ -1200,26 +2000,43 @@ export default function VolunteerPortal({
                           </div>
                           <div>
                             <label className="block text-[10px] font-mono text-slate-400 uppercase font-black mb-1">Drive Capacity Size</label>
-                            <select
-                              value={diskForm.hd_size}
-                              onChange={(e) => setDiskForm({...diskForm, hd_size: e.target.value})}
-                              className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-blue-500"
-                            >
-                              {['4TB', '6TB', '8TB', '10TB', '12TB', '16TB', '18TB', '20TB', '24TB'].map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            <div className="flex items-stretch gap-2">
+                              <select
+                                value={diskForm.hd_size}
+                                onChange={(e) => setDiskForm({...diskForm, hd_size: e.target.value})}
+                                className="flex-1 bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-blue-500"
+                              >
+                                {['4TB', '6TB', '8TB', '10TB', '12TB', '16TB', '18TB', '20TB', '24TB'].map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                              <div className="grid grid-cols-2 gap-2 min-w-[166px]">
+                                {['6TB', '8TB'].map(sizePreset => (
+                                  <button
+                                    key={sizePreset}
+                                    type="button"
+                                    onClick={() => setDiskForm({ ...diskForm, hd_size: sizePreset })}
+                                    className={`min-h-10 rounded-lg border-2 px-2 text-[11px] font-black tracking-wide transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 ${
+                                      diskForm.hd_size === sizePreset
+                                        ? 'bg-cyan-300 border-cyan-100 text-slate-950 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_6px_16px_rgba(8,145,178,0.45)]'
+                                        : 'bg-[#111113] border-[#3A3A40] text-slate-200 hover:border-slate-500 hover:bg-[#16161B]'
+                                    }`}
+                                  >
+                                    {sizePreset}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         </div>
 
                         {/* Redundant Ingestion Safeguard */}
-                        {disks.some(d => d.hd_serial.toLowerCase().trim() === diskForm.hd_serial.toLowerCase().trim() && d.hd_serial.trim() !== '') && (
+                        {duplicateSerialDetected && (
                           <div className="bg-rose-955/10 border border-rose-900/30 p-3.5 rounded-lg flex flex-col gap-2">
                             <div className="flex gap-2 text-rose-500 text-xs font-extrabold tracking-wider font-mono">
                               <ShieldAlert className="h-4.5 w-4.5" />
                               REDUNDANT INGESTION SAFEGUARD DETECTED
                             </div>
                             <p className="text-[11px] text-rose-300 leading-normal font-medium">
-                              A physical storage media with serial <b>{diskForm.hd_serial}</b> already exists in our master ledger database. 
-                              Admin override required to register duplicate ingestion instances.
+                              Redundant Ingestion Guard is active. Admin Authorization required to duplicate ingestion.
                             </p>
                             {currentUser?.role === 'admin' && (
                               <label className="flex items-center gap-2 text-xs text-slate-300 select-none font-mono cursor-pointer bg-[#16161A] p-2 border border-[#2A2A2E] rounded w-fit">
@@ -1237,9 +2054,9 @@ export default function VolunteerPortal({
                         <div className="flex justify-end pt-2">
                           <button
                             type="button"
-                            disabled={!diskForm.hd_serial || !diskForm.hd_manufacturer}
+                            disabled={!diskForm.hd_serial || !diskForm.hd_manufacturer || duplicateNeedsAdminOverride}
                             onClick={() => setIntakeStep(2)}
-                            className="inline-flex items-center gap-1 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-bold text-white rounded-lg cursor-pointer shadow-md transition"
+                            className="inline-flex min-h-12 items-center gap-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-bold text-white rounded-xl cursor-pointer shadow-md transition"
                           >
                             <span>Proceed to Assignment</span>
                             <ArrowRight className="h-3.5 w-3.5" />
@@ -1256,7 +2073,7 @@ export default function VolunteerPortal({
             {intakeStep === 2 && (
               <div className="space-y-5">
                 <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
-                  <h4 className="text-sm font-bold text-slate-200">Step 2: Assign Source & Client (Verify Output Tag & Ticket)</h4>
+                  <h4 className="text-sm font-bold text-slate-200">Step 2:  Assign Source and Add to Database</h4>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1265,7 +2082,7 @@ export default function VolunteerPortal({
                     >
                       Start Over
                     </button>
-                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">INTAKE FLOWCHART REQUISITE</span>
+                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">62MM LABEL PRINT READY</span>
                   </div>
                 </div>
 
@@ -1310,7 +2127,7 @@ export default function VolunteerPortal({
                                 setDiskForm({...diskForm, source_requested_id: source.id});
                               }
                             }}
-                            className={`p-5 rounded-xl border flex flex-col items-center justify-center gap-3 transition-all text-center relative ${
+                            className={`min-h-28 p-5 rounded-xl border flex flex-col items-center justify-center gap-3 transition-all text-center relative ${
                               !isCompatible 
                                 ? 'bg-rose-950/5 border-rose-955/20 opacity-40 cursor-not-allowed text-slate-500'
                                 : isSelected 
@@ -1344,11 +2161,21 @@ export default function VolunteerPortal({
 
                 {diskForm.source_requested_id && (
                   <div className="space-y-3 border-t border-[#2A2A2E] pt-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold text-slate-400 font-mono tracking-wider uppercase">Live Tag & Ticket Output Preview:</span>
-                      <span className="text-[9px] bg-amber-950/45 text-amber-400 font-mono px-2 py-0.5 rounded border border-amber-900/40">READY FOR PRINT</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowIntakePreview(prev => !prev)}
+                          className="min-h-10 px-3 py-2 bg-[#16161A] border border-[#2A2A2E] text-xs font-bold text-slate-200 rounded-lg hover:bg-slate-800"
+                        >
+                          {showIntakePreview ? 'Hide Preview' : 'Show Preview'}
+                        </button>
+                        <span className="text-[9px] bg-amber-950/45 text-amber-400 font-mono px-2 py-0.5 rounded border border-amber-900/40">READY FOR PRINT</span>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center justify-center">
+                    {showIntakePreview && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center justify-center">
                       
                       {/* PHYSICAL ASSET TAG - WITH DRIVE CAMERA PHOTO */}
                       <div className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none mx-auto relative">
@@ -1388,9 +2215,9 @@ export default function VolunteerPortal({
                         <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
                           {/* 1. Drive Image */}
                           <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                            {scanImageBase64 ? (
+                            {intakePreviewImage ? (
                               <img
-                                src={scanImageBase64}
+                                src={intakePreviewImage}
                                 alt="Drive sticker snapshot"
                                 referrerPolicy="no-referrer"
                                 className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5"
@@ -1415,7 +2242,7 @@ export default function VolunteerPortal({
                       </div>
 
                       {/* DDV DRIVE TICKET (CHANGED NAME & STORAGE FIELD, REMOVED QR LABEL) */}
-                      <div className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border-2 border-dashed border-emerald-600 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
+                      <div className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
                         <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
                         
                         {/* LEFT COLUMN */}
@@ -1449,22 +2276,17 @@ export default function VolunteerPortal({
                         </div>
                       </div>
                     </div>
+                    )}
                   </div>
                 )}
 
-                <div className="p-4 bg-blue-950/25 border border-blue-900/40 text-blue-300 rounded-xl flex gap-3 text-xs leading-normal">
-                  <Info className="h-5 w-5 text-blue-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-extrabold text-slate-200 block uppercase font-mono text-[11px] tracking-wider mb-0.5">EXTERNAL PHYSICAL COPY OPERATION</span>
-                    <span>The replication duplication will be processed off-line. Affix the printed Physical Asset Tag onto the drive, and hand the DDV Drive Ticket to the physical client.</span>
-                  </div>
-                </div>
+                <div className="h-3" aria-hidden="true" />
 
                 <div className="flex justify-between pt-4 border-t border-[#2A2A2E]">
                   <button
                     type="button"
                     onClick={() => setIntakeStep(1)}
-                    className="px-4 py-2 bg-[#0E0E10] border border-[#2A2A2E] text-xs font-semibold text-slate-300 hover:text-white rounded-lg transition cursor-pointer"
+                    className="min-h-12 px-5 py-3 bg-[#0E0E10] border border-[#2A2A2E] text-sm font-semibold text-slate-300 hover:text-white rounded-xl transition cursor-pointer"
                   >
                     Back
                   </button>
@@ -1472,7 +2294,7 @@ export default function VolunteerPortal({
                     type="button"
                     disabled={!diskForm.source_requested_id || isLoading}
                     onClick={handlePOSIntakeSubmit}
-                    className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-bold text-white rounded-lg cursor-pointer transition shadow-md"
+                    className="inline-flex min-h-12 items-center gap-1.5 px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-sm font-bold text-white rounded-xl cursor-pointer transition shadow-md"
                   >
                     {isLoading ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1485,13 +2307,153 @@ export default function VolunteerPortal({
               </div>
             )}
 
-            {/* STEP 4: SUCCESS SUMMARY & RECEIPT PRINT */}
+            {/* STEP 4: PRINT REVIEW + DECISION */}
             {intakeStep === 4 && intakeSuccessRecord && (
+              <div className="space-y-5">
+                <div className="border-b border-[#2A2A2E] pb-3 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-black font-sans text-white uppercase tracking-tight">Tag & Ticket Printing</h3>
+                    <p className="text-xs text-slate-400 mt-1">Review label output, print, then return to intake when done.</p>
+                    {currentUser?.role === 'admin' && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-mono">
+                        <span className="text-slate-400">Alignment</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPrintContentShiftMm(0);
+                            setPrintContentShiftXMm(0);
+                            setPrintSheetOffsetMm(0);
+                            setPrintSheetOffsetXMm(0);
+                          }}
+                          className="px-2 py-1 rounded border border-amber-900/40 bg-amber-950/20 text-amber-300 hover:bg-amber-900/30"
+                        >
+                          Reset Align
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={handleThermalPrint}
+                      autoFocus
+                      className="inline-flex items-center justify-center min-h-12 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm rounded-xl cursor-pointer ring-2 ring-blue-300 shadow-lg shadow-blue-900/30"
+                    >
+                      🖨️ Print
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetIntakeForm}
+                      className="px-6 py-3 min-h-12 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-200 font-black text-sm rounded-xl cursor-pointer"
+                    >
+                      Back to Intake
+                    </button>
+                  </div>
+                </div>
+
+                {printedTicketDisk && (
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
+                    <div className="space-y-6">
+                      <div ref={tagPrintCardRef} className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto">
+                        <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
+                        <div className="absolute top-1.5 right-2.5 text-right">
+                          <span className="text-[8px] text-slate-400 tracking-wider font-extrabold block leading-none uppercase">PHYSICAL ASSET TAG</span>
+                          <span className="text-xs sm:text-sm font-black text-slate-900 block mt-0.5 tracking-tight leading-none">{printedTicketDisk.id}</span>
+                        </div>
+                        <div className="flex flex-col justify-center text-left flex-1 min-w-0 pr-1 pt-6 pb-6 relative h-full">
+                          <div className="space-y-1 my-auto text-[9.5px] text-slate-700">
+                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
+                              <span className="shrink-0 text-slate-500 font-bold">SOURCE:</span>
+                              <span className="font-black text-blue-600">{printedTicketDisk.source_requested_id}</span>
+                            </div>
+                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
+                              <span className="shrink-0 text-slate-500 font-bold">DRIVE S/N:</span>
+                              <span className="font-black text-slate-800">{printedTicketDisk.hd_serial || 'PENDING'}</span>
+                            </div>
+                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
+                              <span className="shrink-0 text-slate-500 font-bold">ACCEPTED:</span>
+                              <span className="font-black text-slate-800">{printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
+                          <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
+                            {printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 ? (
+                              <img src={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || ''} alt="Physical drive screenshot" referrerPolicy="no-referrer" className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5" />
+                            ) : (
+                              <div className="w-[68px] h-[68px] bg-slate-100 border border-slate-200 rounded flex flex-col items-center justify-center text-[7px] text-slate-400 text-center leading-tight">NO IMAGE</div>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-center bg-blue-600 text-white font-black text-[46px] leading-none rounded-lg w-[68px] h-[68px] shrink-0 shadow border border-blue-700 select-none">
+                            {printedTicketDisk.source_requested_id ? String(printedTicketDisk.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
+                          </div>
+                          <div className="flex items-center justify-center bg-white p-1.5 border border-slate-300 rounded-lg shrink-0 w-[68px] h-[68px] shadow-sm">
+                            <QRCodeSVG value={printedTicketDisk.id} size={54} level="M" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div ref={ticketPrintCardRef} className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
+                        <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
+                        <div className="flex flex-col justify-between h-full text-left flex-1 min-w-0">
+                          <div>
+                            <span className="text-[9px] text-emerald-800 tracking-wider font-black block leading-none uppercase">DDV Drive Ticket</span>
+                            <span className="text-xs sm:text-sm font-black text-slate-900 block mt-1 tracking-tight break-all leading-tight whitespace-normal">{printedTicketDisk.id}</span>
+                          </div>
+                          <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
+                            <div className="flex justify-between gap-1">
+                              <span>SOURCE DATASET:</span>
+                              <span className="font-extrabold text-emerald-800 truncate">{printedTicketDisk.source_requested_id}</span>
+                            </div>
+                            <div className="flex justify-between gap-1">
+                              <span>ACCEPTED AT:</span>
+                              <span className="font-extrabold text-emerald-700 truncate">{printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-center justify-center bg-white p-2 border border-emerald-200 rounded-lg shrink-0 w-[95px] h-[95px]">
+                          <QRCodeSVG value={printedTicketDisk.id} size={75} level="M" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-4 space-y-3">
+                      <div className="inline-flex items-center justify-center p-2 rounded-full bg-emerald-950/45 text-emerald-400 border border-emerald-900/30">
+                        <CheckCircle className="h-5 w-5 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-tight">Ingestion Transaction Committed OK</h4>
+                        <p className="text-[11px] text-slate-400 mt-1">Drive registered in the master ledger and ready for tag/ticket handoff.</p>
+                      </div>
+                      <div className="bg-[#111113] p-3 rounded-lg border border-[#2A2A2E] space-y-2 text-[11px] font-mono">
+                        <div className="text-slate-500 font-bold border-b border-[#2A2A2E] pb-1 text-[10px] uppercase">Record Metrics</div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Ledger ID:</span>
+                          <span className="text-white font-bold text-right break-all">{printedTicketDisk.id}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Serial:</span>
+                          <span className="text-white font-bold text-right break-all">{printedTicketDisk.hd_serial || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-400">Status:</span>
+                          <span className="text-emerald-400 font-bold uppercase">Received</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* STEP 5: SUCCESS SUMMARY */}
+            {intakeStep === 5 && intakeSuccessRecord && (
               <div className="space-y-6 text-center">
                 <div className="inline-flex items-center justify-center p-3 rounded-full bg-emerald-950/45 text-emerald-400 border border-emerald-900/30 mb-1">
                   <CheckCircle className="h-8 w-8 text-emerald-400" />
                 </div>
-                
+
                 <div className="space-y-1">
                   <h3 className="text-lg font-black font-sans text-white uppercase tracking-tight">INGESTION TRANSACTION COMMITTED OK</h3>
                   <p className="text-xs text-slate-400">
@@ -1518,17 +2480,18 @@ export default function VolunteerPortal({
                 <div className="flex justify-center gap-2 pt-3">
                   <button
                     type="button"
-                    onClick={() => setPrintedTicketDisk(intakeSuccessRecord.disk)}
+                    onClick={() => setIntakeStep(4)}
                     className="inline-flex items-center justify-center min-h-12 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm rounded-xl cursor-pointer"
                   >
-                    🖨️ Re-open Ticket / Tag Printer
+                    Re-open Label Layout
                   </button>
                   <button
                     type="button"
                     onClick={handleResetIntakeForm}
-                    className="px-4 py-2 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-300 font-bold text-xs rounded-lg cursor-pointer"
+                    autoFocus
+                    className="px-6 py-3 min-h-12 bg-emerald-600 border border-emerald-500 hover:bg-emerald-500 text-white font-black text-sm rounded-xl cursor-pointer shadow-lg shadow-emerald-900/30 ring-2 ring-emerald-400/60"
                   >
-                    Start Next Intake Ingestion ⚡
+                    Start Next Ingestion ⚡
                   </button>
                 </div>
               </div>
@@ -1684,7 +2647,7 @@ export default function VolunteerPortal({
                       <button
                         type="button"
                         onClick={() => setSelectedReturnDiskId('')}
-                        className="flex-1 py-3 bg-[#0E0E10] hover:bg-slate-800 border border-slate-700 hover:text-white text-slate-300 font-bold text-xs rounded-xl cursor-pointer transition uppercase tracking-wider text-center"
+                        className="flex-1 min-h-12 py-3 bg-[#0E0E10] hover:bg-slate-800 border border-slate-700 hover:text-white text-slate-300 font-bold text-sm rounded-xl cursor-pointer transition uppercase tracking-wider text-center"
                       >
                         ❌ Cancel Return (Esc)
                       </button>
@@ -1692,7 +2655,7 @@ export default function VolunteerPortal({
                         type="button"
                         disabled={isSubmittingReturn}
                         onClick={handlePOSReturnSubmit}
-                        className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-xs rounded-xl cursor-pointer transition uppercase tracking-wider text-center shadow-lg hover:shadow-emerald-900/30"
+                        className="flex-1 min-h-12 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-sm rounded-xl cursor-pointer transition uppercase tracking-wider text-center shadow-lg hover:shadow-emerald-900/30"
                       >
                         {isSubmittingReturn ? 'Writing Records...' : '✅ Confirm Return & Release (Enter)'}
                       </button>
@@ -1732,7 +2695,7 @@ export default function VolunteerPortal({
                         />
                         <button
                           type="submit"
-                          className="absolute right-1.5 top-1.5 bg-blue-600 hover:bg-blue-500 text-[10px] font-bold text-white px-2.5 py-1.5 rounded transition uppercase tracking-wider cursor-pointer"
+                          className="absolute right-1.5 top-1.5 min-h-9 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white px-3 py-2 rounded transition uppercase tracking-wider cursor-pointer"
                         >
                           Scan
                         </button>
@@ -1767,7 +2730,7 @@ export default function VolunteerPortal({
                         <button
                           type="button"
                           onClick={() => setIsReturnWebcamActive(false)}
-                          className="w-full py-1.5 bg-[#16161A] hover:bg-slate-800 text-slate-300 font-bold text-[10px] rounded border border-[#2A2A2E] cursor-pointer transition uppercase"
+                          className="w-full min-h-12 py-3 bg-[#16161A] hover:bg-slate-800 text-slate-300 font-bold text-sm rounded border border-[#2A2A2E] cursor-pointer transition uppercase"
                         >
                           Turn Camera Off
                         </button>
@@ -1776,7 +2739,7 @@ export default function VolunteerPortal({
                       <button
                         type="button"
                         onClick={() => setIsReturnWebcamActive(true)}
-                        className="w-full flex items-center justify-center gap-1.5 py-2 border border-dashed border-blue-900/50 bg-blue-950/20 text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-950/40 transition cursor-pointer"
+                        className="w-full min-h-12 flex items-center justify-center gap-1.5 py-3 border border-dashed border-blue-900/50 bg-blue-950/20 text-blue-400 rounded-lg text-sm font-bold hover:bg-blue-950/40 transition cursor-pointer"
                       >
                         <Camera className="h-3.5 w-3.5" />
                         Scan Ticket with Live Webcam
@@ -1793,7 +2756,7 @@ export default function VolunteerPortal({
                         Active Ingest Queue
                       </span>
                       <span className="text-[10px] text-slate-500">
-                        {filteredForReturn.length} unreleased drive{filteredForReturn.length !== 1 ? 's' : ''} in queue
+                        {filteredForReturn.length} unreleased drive{filteredForReturn.length !== 1 ? 's' : ''} in queue • Page {safeReturnPage} / {returnTotalPages}
                       </span>
                     </div>
 
@@ -1807,8 +2770,8 @@ export default function VolunteerPortal({
                   </div>
 
                   {filteredForReturn.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-2.5 max-h-[360px] overflow-y-auto pr-1">
-                      {filteredForReturn.map(d => {
+                    <div className="grid grid-cols-1 gap-2.5">
+                      {pagedForReturn.map(d => {
                         const isSelected = selectedReturnDiskId === d.id;
                         return (
                           <div
@@ -1862,7 +2825,7 @@ export default function VolunteerPortal({
                               onClick={() => {
                                 setSelectedReturnDiskId(d.id);
                               }}
-                              className="px-2.5 py-1.5 bg-[#16161A] border border-slate-700 hover:border-blue-500 hover:bg-blue-950/20 text-[10px] font-mono text-slate-300 hover:text-blue-400 rounded-lg cursor-pointer transition uppercase font-extrabold shrink-0"
+                              className="min-h-11 px-3.5 py-2.5 bg-[#16161A] border border-slate-700 hover:border-blue-500 hover:bg-blue-950/20 text-xs font-mono text-slate-300 hover:text-blue-400 rounded-lg cursor-pointer transition uppercase font-extrabold shrink-0"
                             >
                               ⚡ Simulate QR Scan
                             </button>
@@ -1873,6 +2836,28 @@ export default function VolunteerPortal({
                   ) : (
                     <div className="text-center py-8 text-xs text-slate-500 font-mono bg-[#0E0E10] rounded-xl border border-[#2A2A2E]">
                       No matching unreleased drives found in intake queue.
+                    </div>
+                  )}
+
+                  {filteredForReturn.length > 0 && returnTotalPages > 1 && (
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={safeReturnPage <= 1}
+                        onClick={() => setReturnPage(p => Math.max(1, p - 1))}
+                        className="min-h-10 px-3 py-2 rounded-lg border border-[#2A2A2E] bg-[#0E0E10] text-xs font-bold text-slate-300 disabled:opacity-40"
+                      >
+                        Previous
+                      </button>
+                      <span className="text-[10px] text-slate-500 font-mono">Page {safeReturnPage} of {returnTotalPages}</span>
+                      <button
+                        type="button"
+                        disabled={safeReturnPage >= returnTotalPages}
+                        onClick={() => setReturnPage(p => Math.min(returnTotalPages, p + 1))}
+                        className="min-h-10 px-3 py-2 rounded-lg border border-[#2A2A2E] bg-[#0E0E10] text-xs font-bold text-slate-300 disabled:opacity-40"
+                      >
+                        Next
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1905,8 +2890,8 @@ export default function VolunteerPortal({
               </div>
 
               {filteredForReprint.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[350px] overflow-y-auto pr-1">
-                  {filteredForReprint.map(d => (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {pagedForReprint.map(d => (
                     <div
                       key={d.id}
                       className="p-3.5 bg-[#0E0E10] border border-[#2A2A2E] hover:border-slate-700 rounded-xl flex items-center justify-between gap-4 transition-all"
@@ -1947,19 +2932,41 @@ export default function VolunteerPortal({
                   No matching database entries found.
                 </div>
               )}
+
+              {filteredForReprint.length > 0 && reprintTotalPages > 1 && (
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={safeReprintPage <= 1}
+                    onClick={() => setReprintPage(p => Math.max(1, p - 1))}
+                    className="min-h-10 px-3 py-2 rounded-lg border border-[#2A2A2E] bg-[#0E0E10] text-xs font-bold text-slate-300 disabled:opacity-40"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-[10px] text-slate-500 font-mono">Page {safeReprintPage} of {reprintTotalPages}</span>
+                  <button
+                    type="button"
+                    disabled={safeReprintPage >= reprintTotalPages}
+                    onClick={() => setReprintPage(p => Math.min(reprintTotalPages, p + 1))}
+                    className="min-h-10 px-3 py-2 rounded-lg border border-[#2A2A2E] bg-[#0E0E10] text-xs font-bold text-slate-300 disabled:opacity-40"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
 
       {/* TICKET / TAG PRINT OVERLAY */}
-      {printedTicketDisk && (
+      {printedTicketDisk && posTab === 'reprint' && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#16161A] rounded-xl shadow-2xl overflow-hidden max-w-lg w-full border border-slate-700/50 flex flex-col">
             
             <div className="border-b border-[#2A2A2E] p-4 bg-slate-900/60 text-center relative">
-              <span className="text-[10px] text-emerald-450 border border-emerald-900/40 rounded px-1.5 py-0.5 uppercase tracking-wider font-extrabold font-mono">DDV INTENDED DESK PRINTER</span>
-              <h4 className="font-bold text-lg block mt-1.5 font-sans tracking-tight text-white">Active Tag & Ticket Printer Layout</h4>
+              <span className="text-[10px] text-emerald-450 border border-emerald-900/40 rounded px-1.5 py-0.5 uppercase tracking-wider font-extrabold font-mono">62MM THERMAL STICKER PRINTER</span>
+              <h4 className="font-bold text-lg block mt-1.5 font-sans tracking-tight text-white">Tag & Ticket Printing</h4>
               <button 
                 onClick={() => setPrintedTicketDisk(null)}
                 className="absolute top-3.5 right-3.5 text-xs text-slate-400 hover:text-slate-200 font-bold hover:bg-[#2A2A2E] px-2 py-1 rounded"
@@ -1973,7 +2980,7 @@ export default function VolunteerPortal({
               {/* TAG #1: PHYSICAL ASSET TAG */}
               <div className="space-y-1">
                 <span className="text-[9px] text-slate-450 uppercase font-mono tracking-wider font-extrabold block">AFFIX SECURELY TO DRIVE CASING (TAG #1)</span>
-                <div className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto">
+                <div ref={tagPrintCardRef} className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto">
                   <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
                   
                   {/* RIGHT JUSTIFIED DRIVE ID ABSOLUTE POSITIONED ABOVE IMAGES */}
@@ -2010,9 +3017,9 @@ export default function VolunteerPortal({
                   <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
                     {/* 1. Drive Image */}
                     <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                      {printedTicketDisk.hd_image || scanImageBase64 ? (
+                      {printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 ? (
                         <img
-                          src={printedTicketDisk.hd_image || scanImageBase64 || ''}
+                          src={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || ''}
                           alt="Physical drive screenshot"
                           referrerPolicy="no-referrer"
                           className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5"
@@ -2040,7 +3047,7 @@ export default function VolunteerPortal({
               {/* TICKET #2: DDV DRIVE TICKET (NO QR CODE LABEL, CONTAINS INTAKE DATE/TIME) */}
               <div className="space-y-1">
                 <span className="text-[9px] text-emerald-450 uppercase font-mono tracking-wider font-extrabold block">GIVE TO PHYSICAL OWNER / REPRESENTATIVE (TICKET #2)</span>
-                <div className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border-2 border-dashed border-emerald-600 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
+                <div ref={ticketPrintCardRef} className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
                   <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
                   
                   {/* LEFT COLUMN - REQUIRED DATA */}
@@ -2077,22 +3084,39 @@ export default function VolunteerPortal({
 
             </div>
 
-            <div className="bg-[#111113] p-3 text-center border-t border-[#2A2A2E] flex gap-2">
+            <div className="bg-[#111113] p-3 text-center border-t border-[#2A2A2E] space-y-2">
+              {currentUser?.role === 'admin' && (
+                <div className="flex flex-wrap items-center justify-center gap-2 text-[10px] font-mono">
+                  <span className="text-slate-400">Alignment</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrintContentShiftMm(0);
+                      setPrintContentShiftXMm(0);
+                      setPrintSheetOffsetMm(0);
+                      setPrintSheetOffsetXMm(0);
+                    }}
+                    className="px-2 py-1 rounded border border-amber-900/40 bg-amber-950/20 text-amber-300 hover:bg-amber-900/30"
+                  >
+                    Reset Align
+                  </button>
+                </div>
+              )}
+
+              <div className="flex gap-2">
               <button
-                onClick={() => {
-                  setPrintedTicketDisk(null);
-                  alert("Executing simulated print command... Physical tickets generated via thermal printer.");
-                }}
+                onClick={handleThermalPrint}
                 className="flex-1 min-h-12 text-sm font-black text-white bg-blue-600 hover:bg-blue-500 py-3 rounded-xl transition"
               >
-                Mock Physical Print (Both Labels)
+                Print 62mm Labels (Tag + Ticket)
               </button>
               <button
                 onClick={() => setPrintedTicketDisk(null)}
-                className="px-4 text-xs font-bold text-slate-300 hover:text-white bg-[#0E0E10] border border-[#2A2A2E] py-2.5 rounded-lg transition"
+                className="px-5 min-h-12 text-sm font-bold text-slate-300 hover:text-white bg-[#0E0E10] border border-[#2A2A2E] py-3 rounded-xl transition"
               >
                 Close View
               </button>
+              </div>
             </div>
           </div>
         </div>
