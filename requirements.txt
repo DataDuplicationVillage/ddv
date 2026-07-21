@@ -1,0 +1,11 @@
+# Core Django framework
+Django>=4.2,<6.0
+
+# Admin UI theme package used in INSTALLED_APPS as 'unfold'
+django-unfold>=0.40,<1.0
+
+# Object-level permissions backend used in AUTHENTICATION_BACKENDS
+django-guardian>=2.4,<3.0
+
+# QR code generation used by tracker/admin.py
+qrcode[pil]>=7.4,<9.0

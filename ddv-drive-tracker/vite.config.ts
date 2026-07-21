@@ -5,7 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/static/',
+    // Build assets for root hosting (http://host:3000/) in production.
+    base: '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

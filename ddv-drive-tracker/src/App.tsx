@@ -1,47 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import { Suspense, lazy, type FormEvent, type ReactNode, useState, useEffect } from 'react';
 import { 
-  Database, Monitor, Shield, Layers, Server, RefreshCw, Barcode, 
-  Activity, KeyRound, ShieldAlert, UserCheck, ClipboardCheck
+  Shield, Layers, Server, Barcode, 
+  Activity, KeyRound, ShieldAlert, ClipboardCheck
 } from 'lucide-react';
-import VolunteerPortal from './components/VolunteerPortal';
-import AdminPortal from './components/AdminPortal';
 import KioskTerminal from './components/KioskTerminal';
-import ProcessingDesk from './components/ProcessingDesk';
-import QATestingCenter from './components/QATestingCenter';
 import { UserRole } from './types';
 
-class PortalErrorBoundary extends React.Component<
-  { title: string; children: React.ReactNode },
-  { hasError: boolean; message: string }
-> {
-  constructor(props: { title: string; children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, message: '' };
-  }
+const VolunteerPortal = lazy(() => import('./components/VolunteerPortal'));
+const AdminPortal = lazy(() => import('./components/AdminPortal'));
+const ProcessingDesk = lazy(() => import('./components/ProcessingDesk'));
+const QATestingCenter = lazy(() => import('./components/QATestingCenter'));
 
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, message: error?.message || 'Unknown runtime error' };
-  }
+function PortalErrorBoundary({ children }: { title: string; children: ReactNode }) {
+  return <>{children}</>;
+}
 
-  componentDidCatch(error: Error) {
-    console.error('Portal runtime error:', error);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="bg-[#16161A] border border-rose-900/40 rounded-xl p-6 max-w-2xl mx-auto text-left shadow-md my-8 space-y-3">
-          <h3 className="text-sm font-bold text-rose-300">{this.props.title} failed to render</h3>
-          <p className="text-xs text-slate-300">A runtime exception was caught before the page could render. Reload the page to retry.</p>
-          <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg p-3 text-[11px] font-mono text-rose-300 break-words">
-            {this.state.message}
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
+function PortalLoading() {
+  return (
+    <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-6 max-w-lg mx-auto text-center shadow-md my-8 space-y-2">
+      <div className="text-xs font-mono text-slate-400 uppercase tracking-wider">Loading interface module...</div>
+      <div className="text-[11px] text-slate-500">Please wait while the terminal module initializes.</div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -83,7 +63,7 @@ export default function App() {
     }
   }, []);
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!usernameInput || !passwordInput) return;
     setAuthError('');
@@ -380,13 +360,15 @@ export default function App() {
             {activeTab === 'admin' && (
               currentUser.role === 'admin' ? (
                 /* Admin Tables Portal */
-                <AdminPortal
-                  currentUser={currentUser}
-                  onLogout={handleLogout}
-                  onTableUpdateNotification={(table, action, id) => {
-                    triggerVisualPing(`Modified \`${table}\` via ${action} [ID: ${id}]`);
-                  }}
-                />
+                <Suspense fallback={<PortalLoading />}>
+                  <AdminPortal
+                    currentUser={currentUser}
+                    onLogout={handleLogout}
+                    onTableUpdateNotification={(table, action, id) => {
+                      triggerVisualPing(`Modified \`${table}\` via ${action} [ID: ${id}]`);
+                    }}
+                  />
+                </Suspense>
               ) : (
                 /* Admin Block restriction HUD */
                 <div className="bg-[#16161A] border border-[#2A2A2E] rounded-2xl p-8 max-w-lg mx-auto text-center shadow-lg my-12 space-y-4 font-sans">
@@ -422,13 +404,15 @@ export default function App() {
             {activeTab === 'volunteer' && (
               (currentUser.role === 'admin' || currentUser.role === 'volunteer' || currentUser.role === 'processing') ? (
                 /* Volunteer Point of Sale Guided Operations Flowchart */
-                <VolunteerPortal
-                  currentUser={currentUser}
-                  onLogout={handleLogout}
-                  onTableUpdateNotification={(table, action, id) => {
-                    triggerVisualPing(`Modified \`${table}\` via POS Operator [ID: ${id}]`);
-                  }}
-                />
+                <Suspense fallback={<PortalLoading />}>
+                  <VolunteerPortal
+                    currentUser={currentUser}
+                    onLogout={handleLogout}
+                    onTableUpdateNotification={(table, action, id) => {
+                      triggerVisualPing(`Modified \`${table}\` via POS Operator [ID: ${id}]`);
+                    }}
+                  />
+                </Suspense>
               ) : (
                 /* General authorization message */
                 <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-8 max-w-lg mx-auto text-center shadow-md my-12 font-sans space-y-3">
@@ -444,11 +428,13 @@ export default function App() {
               currentUser.role === 'admin' || currentUser.role === 'processing' ? (
                 /* Processing dashboard to move drives */
                   <PortalErrorBoundary title="Processing Portal">
-                    <ProcessingDesk 
-                      onTableUpdateNotification={(table, action, id) => {
-                        triggerVisualPing(`Copier action registered on \`${table}\` [ID: ${id}]`);
-                      }}
-                    />
+                    <Suspense fallback={<PortalLoading />}>
+                      <ProcessingDesk 
+                        onTableUpdateNotification={(table, action, id) => {
+                          triggerVisualPing(`Copier action registered on \`${table}\` [ID: ${id}]`);
+                        }}
+                      />
+                    </Suspense>
                   </PortalErrorBoundary>
               ) : (
                 <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-8 max-w-lg mx-auto text-center shadow-md my-12 font-sans space-y-3">
@@ -477,15 +463,17 @@ export default function App() {
       </footer>
 
       {currentUser?.role === 'admin' && (
-        <QATestingCenter
-          isOpen={isQAPanelOpen}
-          onClose={() => setIsQAPanelOpen(false)}
-          activeTab={activeTab}
-          setActiveTab={setActiveTabTab}
-          currentUser={currentUser}
-          setCurrentUser={setCurrentUser}
-          triggerVisualPing={triggerVisualPing}
-        />
+        <Suspense fallback={null}>
+          <QATestingCenter
+            isOpen={isQAPanelOpen}
+            onClose={() => setIsQAPanelOpen(false)}
+            activeTab={activeTab}
+            setActiveTab={setActiveTabTab}
+            currentUser={currentUser}
+            setCurrentUser={setCurrentUser}
+            triggerVisualPing={triggerVisualPing}
+          />
+        </Suspense>
       )}
 
     </div>

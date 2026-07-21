@@ -3,6 +3,11 @@ from . import views
 from . import api_views
 
 urlpatterns = [
+    # Frontend build assets served for Django-hosted SPA mode on port 8000.
+    path('assets/<path:asset_path>', views.spa_asset, name='spa_asset'),
+    path('health/frontend', views.spa_health, name='spa_health_frontend'),
+    path('api/health/frontend', views.spa_health, name='api_spa_health_frontend'),
+
     # API compatibility routes for ddv-drive-tracker frontend.
     path('api/auth/login', api_views.api_auth_login, name='api_auth_login'),
     path('api/admin/users', api_views.api_admin_users_collection, name='api_admin_users_collection'),
@@ -27,5 +32,5 @@ urlpatterns = [
 
     # Single-page app host and fallback routes.
     path('', views.spa_index, name='spa_index'),
-    re_path(r'^(?!api(?:/|$)|legacy(?:/|$)|static/).*$', views.spa_index, name='spa_fallback'),
+    re_path(r'^(?!api(?:/|$)|legacy(?:/|$)|assets(?:/|$)|static/).*$', views.spa_index, name='spa_fallback'),
 ]

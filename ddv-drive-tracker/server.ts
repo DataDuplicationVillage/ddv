@@ -1069,8 +1069,15 @@ async function serveApp() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    // Serve built assets from both "/" and "/static" to support existing deployments.
+    app.use('/static', express.static(distPath));
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+
+    // Only route non-API, non-file paths to index.html for SPA deep links.
+    app.get(/^\/(?!api).*/, (req, res, next) => {
+      if (path.extname(req.path)) {
+        return next();
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

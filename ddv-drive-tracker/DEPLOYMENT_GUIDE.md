@@ -13,6 +13,7 @@ The Drive-Ops system is architected as an **extremely robust, self-contained ful
 - **Backend Service**: Express v4 server. In production, this server performs two vital duties:
   1. Serves the pre-compiled static frontend assets from `/dist` and handles HTML5 routing fallbacks.
   2. Exposes secure, high-throughput REST API routes `/api/*` for disk lookups, intake registration, and datasource management.
+- **Production Asset Path Contract (Critical)**: The frontend build must target root hosting so `dist/index.html` references `/assets/...` (not `/static/assets/...`) when the app is served at `http://<server-ip>:3000`. A mismatch here is a primary cause of white-screen loads.
 - **State & Database Layer**: Self-contained JSON-based filesystem database (`db.json`) residing in the application directory. No PostgreSQL, MySQL, or cloud dependencies are required. This ensures instantaneous startup and simple, file-based backup protocols.
 - **Heuristic Air-Gap Fallbacks**: If the environment has no internet access, calls to the Gemini API (`@google/genai`) will fail gracefully. The backend automatically switches to the high-fidelity **Heuristic Match Fallback System**, keeping the webcam OCR form auto-population 100% operational with intelligent preset heuristics.
 
@@ -24,6 +25,36 @@ Standard browser security engines (Chrome, Edge, Firefox, Safari) strictly enfor
 * **The webcam `getUserMedia` API is completely disabled on non-localhost, unencrypted HTTP connections.**
 * If operators access the Volunteer Intake Portal over the local network via an IP address or raw domain name (e.g., `http://10.0.0.50:3000`), **the webcam feed will fail to load**.
 * To use the hardware webcam scanner over the local network, you **MUST** serve the application over **HTTPS** (by configuring an SSL proxy like Nginx with self-signed certificates, as covered in Section 5) or use localhost directly on the server machine.
+
+---
+
+## 2.5 Pre-Deploy Go/No-Go Checklist (60 Seconds)
+
+Run this checklist immediately before enabling production access:
+
+1. Build completed on target host with no fatal errors:
+   ```bash
+   cd /var/www/drive-ops
+   npm run build
+   ```
+2. `dist/index.html` asset paths are root-based:
+   - Confirm script/link tags reference `/assets/...`
+   - If you see `/static/assets/...`, stop and rebuild from latest source
+3. Runtime service restarted after build:
+   ```bash
+   sudo systemctl restart drive-ops
+   ```
+4. Health check of HTML and JS asset responses:
+   ```bash
+   curl -I http://127.0.0.1:3000/
+   curl -I http://127.0.0.1:3000/assets/index-*.js
+   ```
+5. Response sanity:
+   - `/` returns `200 OK` with `Content-Type: text/html`
+   - `/assets/...js` returns `200 OK` with `Content-Type: application/javascript`
+6. Browser confirmation from an operator workstation:
+   - Load `http://<server-ip>:3000`
+   - Confirm the interface renders (not a blank white screen)
 
 ---
 
@@ -44,6 +75,7 @@ Since your target server is on a small, isolated network, you should build and p
    *This command runs two build tools in series:*
    - `vite build`: Compiles the React frontend files and saves them to `/dist`.
    - `esbuild server.ts --bundle...`: Bundles, compiles, and transpiles the Express server from TypeScript to a unified CommonJS file at `/dist/server.cjs`.
+   - **Verification checkpoint (recommended):** open `dist/index.html` and confirm the script/link tags point to `/assets/...` paths.
 4. **Clean up development dependencies** to keep the bundle small (optional, but recommended):
    - You can package the `node_modules` containing only production dependencies:
      ```bash
@@ -295,6 +327,97 @@ If the server reports `EACCES` when attempting to write to `db.json`, verify fil
 ```bash
 sudo chown -R www-data:www-data /var/www/drive-ops
 ```
+
+### White Screen at `http://<server-ip>:3000` (No Visible Errors)
+This is usually a frontend asset-path mismatch or stale build artifact.
+
+Another common cause is **mode mismatch on the same port**:
+- A development server (`npm run dev`) is bound to `:3000`.
+- Browser or cache still requests production paths like `/assets/index-<hash>.js`.
+- Dev server returns HTML for those paths, so the browser cannot execute the app bundle.
+
+Run this quick verification flow:
+1. Rebuild on the deployment host:
+   ```bash
+   cd /var/www/drive-ops
+   npm run build
+   ```
+2. Confirm `dist/index.html` references root assets:
+   - Expected: `/assets/...`
+   - Problematic/stale: `/static/assets/...`
+3. Restart the service:
+   ```bash
+   sudo systemctl restart drive-ops
+   ```
+4. Validate responses directly from the server:
+   ```bash
+   curl -I http://127.0.0.1:3000/
+   curl -I http://127.0.0.1:3000/assets/index-*.js
+   ```
+
+### Troubleshooting URLs for Fast Isolation
+Use these URLs to quickly determine whether the issue is HTML delivery, static assets, or API availability.
+
+First, identify the current hashed asset filenames:
+```bash
+ls -1 /var/www/drive-ops/dist/assets/index-*.js
+ls -1 /var/www/drive-ops/dist/assets/index-*.css
+```
+
+Direct Node/Express checks (server-local):
+1. `http://127.0.0.1:3000/`
+2. `http://127.0.0.1:3000/index.html`
+3. `http://127.0.0.1:3000/assets/index-<hash>.js`
+4. `http://127.0.0.1:3000/assets/index-<hash>.css`
+5. `http://127.0.0.1:3000/api/disks`
+6. `http://127.0.0.1:3000/static/assets/index-<hash>.js` (legacy compatibility path)
+
+Django-hosted SPA checks (Codespaces / port 8000 path):
+1. `http://127.0.0.1:8000/`
+2. `http://127.0.0.1:8000/assets/index-<hash>.js`
+3. `http://127.0.0.1:8000/assets/index-<hash>.css`
+4. `http://127.0.0.1:8000/api/disks`
+5. `http://127.0.0.1:8000/health/frontend` (frontend build + asset integrity report)
+
+Reverse proxy checks (operator workstation):
+1. `https://<server-ip>/`
+2. `https://<server-ip>/assets/index-<hash>.js`
+3. `https://<server-ip>/assets/index-<hash>.css`
+4. `https://<server-ip>/api/disks`
+
+Header/status validation examples:
+```bash
+curl -I http://127.0.0.1:3000/
+curl -I http://127.0.0.1:3000/assets/index-<hash>.js
+curl -I http://127.0.0.1:3000/assets/index-<hash>.css
+curl -I http://127.0.0.1:3000/api/disks
+curl -k -I https://<server-ip>/assets/index-<hash>.js
+curl -s http://127.0.0.1:8000/health/frontend
+```
+
+Expected results:
+1. `/` and `/index.html` return `200` with `Content-Type: text/html`.
+2. `.../assets/index-<hash>.js` returns `200` with `Content-Type: application/javascript`.
+3. `.../assets/index-<hash>.css` returns `200` with `Content-Type: text/css`.
+4. `/api/disks` returns `200` and JSON content.
+5. If JS/CSS URL returns HTML, the app will white-screen due to an asset routing/build mismatch.
+
+If asset files return HTML instead of JavaScript, update to the latest server runtime where SPA fallback excludes file-extension requests and excludes `/api/*` routes.
+
+### Detecting Dev/Prod Port Conflicts Quickly
+1. Check what is listening on port 3000:
+   ```bash
+   lsof -iTCP:3000 -sTCP:LISTEN -n -P
+   ```
+2. If you see a dev command (`npm run dev`, `tsx server.ts` with Vite HMR), stop it before starting production.
+3. Start only one runtime mode on that port:
+   - Development: `npm run dev`
+   - Production: `NODE_ENV=production node dist/server.cjs`
+4. Re-test asset MIME type:
+   ```bash
+   curl -I http://127.0.0.1:3000/assets/index-<hash>.js
+   ```
+   Expected: `Content-Type: application/javascript`.
 
 ### Webcam Stream Fails to Start
 - Ensure the user is accessing the application via a secure context: **localhost** or an **HTTPS (`https://`) URL**.
