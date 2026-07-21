@@ -16,6 +16,30 @@ export default function VolunteerPortal({
   onLogout,
   onTableUpdateNotification
 }: VolunteerPortalProps) {
+  const normalizeDatasource = (raw: any): DataSource => {
+    const specs = raw?.required_specs || {};
+    const sizeOptionsRaw = specs.size_options;
+    const minimumSizeTB = specs.minimum_size_tb;
+
+    const sizeOptions = Array.isArray(sizeOptionsRaw)
+      ? sizeOptionsRaw.filter((s: unknown) => typeof s === 'string' && s.trim())
+      : typeof sizeOptionsRaw === 'string' && sizeOptionsRaw.trim()
+        ? [sizeOptionsRaw.trim()]
+        : typeof minimumSizeTB === 'number' && Number.isFinite(minimumSizeTB)
+          ? [`${minimumSizeTB}TB`]
+          : ['8TB'];
+
+    return {
+      id: String(raw?.id || `DS-${Date.now()}`),
+      name: String(raw?.name || 'Unnamed Source'),
+      description: String(raw?.description || ''),
+      required_specs: {
+        interface: String(specs.interface || 'SATA 3'),
+        size_options: sizeOptions
+      }
+    };
+  };
+
   const parseDriveSizeTB = (sizeValue: string) => {
     const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
     return match ? Number(match[1]) : NaN;
@@ -128,7 +152,15 @@ export default function VolunteerPortal({
       ]);
 
       if (disksRes.ok) setDisks(await disksRes.json());
-      if (sourcesRes.ok) setDatasources(await sourcesRes.json());
+      if (sourcesRes.ok) {
+        const sourcePayload = await sourcesRes.json();
+        const sourceRows = Array.isArray(sourcePayload)
+          ? sourcePayload
+          : Array.isArray(sourcePayload?.datasources)
+            ? sourcePayload.datasources
+            : [];
+        setDatasources(sourceRows.map(normalizeDatasource));
+      }
       if (duplicatorsRes.ok) setDuplicators(await duplicatorsRes.json());
     } catch (err) {
       console.error('Failed to load volunteer data:', err);
@@ -960,7 +992,7 @@ export default function VolunteerPortal({
                       <button
                         type="button"
                         onClick={handleResetIntakeForm}
-                        className="px-3 py-1.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-300 font-bold text-[10px] rounded-lg cursor-pointer"
+                        className="inline-flex items-center justify-center min-h-12 px-5 py-2.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-200 font-black text-sm rounded-xl cursor-pointer"
                       >
                         Start Over
                       </button>
@@ -1229,7 +1261,7 @@ export default function VolunteerPortal({
                     <button
                       type="button"
                       onClick={handleResetIntakeForm}
-                      className="px-3 py-1.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-300 font-bold text-[10px] rounded-lg cursor-pointer"
+                      className="inline-flex items-center justify-center min-h-12 px-5 py-2.5 bg-[#0E0E10] border border-[#2A2A2E] hover:bg-slate-800 text-slate-200 font-black text-sm rounded-xl cursor-pointer"
                     >
                       Start Over
                     </button>
@@ -1487,7 +1519,7 @@ export default function VolunteerPortal({
                   <button
                     type="button"
                     onClick={() => setPrintedTicketDisk(intakeSuccessRecord.disk)}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg cursor-pointer"
+                    className="inline-flex items-center justify-center min-h-12 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm rounded-xl cursor-pointer"
                   >
                     🖨️ Re-open Ticket / Tag Printer
                   </button>
@@ -1903,7 +1935,7 @@ export default function VolunteerPortal({
                       <button
                         type="button"
                         onClick={() => setPrintedTicketDisk(d)}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] rounded-lg shrink-0 transition"
+                        className="inline-flex items-center justify-center min-h-12 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm rounded-xl shrink-0 transition"
                       >
                         🖨️ Print
                       </button>
@@ -2051,7 +2083,7 @@ export default function VolunteerPortal({
                   setPrintedTicketDisk(null);
                   alert("Executing simulated print command... Physical tickets generated via thermal printer.");
                 }}
-                className="flex-1 text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 py-2.5 rounded-lg transition"
+                className="flex-1 min-h-12 text-sm font-black text-white bg-blue-600 hover:bg-blue-500 py-3 rounded-xl transition"
               >
                 Mock Physical Print (Both Labels)
               </button>

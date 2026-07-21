@@ -13,6 +13,36 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const DB_FILE = path.join(process.cwd(), 'db.json');
 
+function normalizeRequiredSpecs(specs: any): { interface: string; size_options: string[] } {
+  const safeSpecs = specs || {};
+  const sizeOptionsRaw = safeSpecs.size_options;
+  const minimumSizeTB = safeSpecs.minimum_size_tb;
+
+  const normalizedSizeOptions = Array.isArray(sizeOptionsRaw)
+    ? sizeOptionsRaw
+        .map((value: unknown) => String(value || '').trim())
+        .filter((value: string) => value.length > 0)
+    : typeof sizeOptionsRaw === 'string' && sizeOptionsRaw.trim().length > 0
+      ? [sizeOptionsRaw.trim()]
+      : typeof minimumSizeTB === 'number' && Number.isFinite(minimumSizeTB)
+        ? [`${minimumSizeTB}TB`]
+        : ['8TB'];
+
+  return {
+    interface: String(safeSpecs.interface || 'SATA 3'),
+    size_options: normalizedSizeOptions.length > 0 ? normalizedSizeOptions : ['8TB']
+  };
+}
+
+function normalizeDataSource(source: any): DataSource {
+  return {
+    id: String(source?.id || `DS-${Date.now()}`),
+    name: String(source?.name || 'Unnamed Source'),
+    description: String(source?.description || ''),
+    required_specs: normalizeRequiredSpecs(source?.required_specs)
+  };
+}
+
 // Middleware to parse JSON
 app.use(express.json({ limit: '10mb' }));
 
@@ -31,31 +61,31 @@ function createInitialState(): ServerState {
         id: 'DS-A',
         name: 'Source A',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       },
       {
         id: 'DS-B',
         name: 'Source B',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', minimum_size_tb: 6 }
+        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
       },
       {
         id: 'DS-C',
         name: 'Source C',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', minimum_size_tb: 6 }
+        required_specs: { interface: 'All Interfaces', size_options: ['6TB'] }
       },
       {
         id: 'DS-D',
         name: 'Source D',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       },
       {
         id: 'DS-E',
         name: 'Source E',
         description: 'Manual external copying source. Detailed configuration and naming pending.',
-        required_specs: { interface: 'All Interfaces', minimum_size_tb: 8 }
+        required_specs: { interface: 'All Interfaces', size_options: ['8TB'] }
       }
     ],
     disks: [
@@ -275,25 +305,11 @@ function loadDB(): ServerState {
         });
       }
       if (loaded.datasources && Array.isArray(loaded.datasources)) {
-        loaded.datasources = loaded.datasources.map((source: any) => {
-          const updated = { ...source };
-          const specs = { ...(updated.required_specs || {}) };
-          if (typeof specs.minimum_size_tb !== 'number') {
-            const sizeOptions = Array.isArray(specs.size_options) ? specs.size_options : [];
-            const tbValues = sizeOptions
-              .map((size: string) => {
-                const match = String(size).trim().match(/^(\d+(?:\.\d+)?)\s*TB$/i);
-                return match ? Number(match[1]) : null;
-              })
-              .filter((value: number | null): value is number => value !== null);
-
-            specs.minimum_size_tb = tbValues.length > 0 ? Math.min(...tbValues) : 8;
-            delete specs.size_options;
-            updated.required_specs = specs;
-            changed = true;
-          }
-          return updated;
-        });
+        const normalizedSources = loaded.datasources.map((source: any) => normalizeDataSource(source));
+        if (JSON.stringify(normalizedSources) !== JSON.stringify(loaded.datasources)) {
+          loaded.datasources = normalizedSources;
+          changed = true;
+        }
       }
       if (!loaded.duplicators || !Array.isArray(loaded.duplicators) || loaded.duplicators.length === 0) {
         loaded.duplicators = createInitialState().duplicators || [];
@@ -542,7 +558,7 @@ app.post('/api/datasources', (req, res) => {
     id: `DS-${Date.now()}`,
     name,
     description: description || '',
-    required_specs: required_specs || { interface: 'SATA 3', minimum_size_tb: 8 }
+    required_specs: normalizeRequiredSpecs(required_specs)
   };
   
   db.datasources.push(newSource);
@@ -561,7 +577,7 @@ app.put('/api/datasources/:id', (req, res) => {
     ...db.datasources[index],
     name: name || db.datasources[index].name,
     description: description !== undefined ? description : db.datasources[index].description,
-    required_specs: required_specs || db.datasources[index].required_specs
+    required_specs: normalizeRequiredSpecs(required_specs || db.datasources[index].required_specs)
   };
   
   saveDB(db);
