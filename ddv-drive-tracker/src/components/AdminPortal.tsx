@@ -21,6 +21,26 @@ export default function AdminPortal({
   onLogout,
   onTableUpdateNotification
 }: AdminPortalProps) {
+  const normalizeDatasource = (raw: any): DataSource => {
+    const fallbackId = `DS-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const sizeOptionsRaw = raw?.required_specs?.size_options;
+    const normalizedSizeOptions = Array.isArray(sizeOptionsRaw)
+      ? sizeOptionsRaw.filter((s: unknown) => typeof s === 'string' && s.trim())
+      : typeof sizeOptionsRaw === 'string' && sizeOptionsRaw.trim()
+        ? [sizeOptionsRaw.trim()]
+        : [];
+
+    return {
+      id: String(raw?.id || fallbackId),
+      name: String(raw?.name || 'Unnamed Source'),
+      description: String(raw?.description || ''),
+      required_specs: {
+        interface: String(raw?.required_specs?.interface || 'SATA 3'),
+        size_options: normalizedSizeOptions.length > 0 ? normalizedSizeOptions : ['8TB']
+      }
+    };
+  };
+
   const parseDriveSizeTB = (sizeValue: string) => {
     const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
     return match ? Number(match[1]) : NaN;
@@ -225,7 +245,16 @@ export default function AdminPortal({
       ]);
 
       if (disksRes.status === 'fulfilled' && disksRes.value.ok) setDisks(await disksRes.value.json());
-      if (sourcesRes.status === 'fulfilled' && sourcesRes.value.ok) setDatasources(await sourcesRes.value.json());
+      if (sourcesRes.status === 'fulfilled' && sourcesRes.value.ok) {
+        const sourcePayload = await sourcesRes.value.json();
+        const sourceRows = Array.isArray(sourcePayload)
+          ? sourcePayload
+          : Array.isArray(sourcePayload?.datasources)
+            ? sourcePayload.datasources
+            : [];
+
+        setDatasources(sourceRows.map(normalizeDatasource));
+      }
       if (usersRes.status === 'fulfilled' && usersRes.value.ok) setUsersList(await usersRes.value.json());
       if (duplicatorsRes.status === 'fulfilled' && duplicatorsRes.value.ok) setDuplicators(await duplicatorsRes.value.json());
     } catch (err) {
@@ -505,7 +534,7 @@ export default function AdminPortal({
         pickup_time: r.pickup_time || '',
       });
     } else if (tabName === 'datasources') {
-      const r = record as DataSource;
+      const r = normalizeDatasource(record);
       setSourceForm({
         name: r.name,
         description: r.description,
