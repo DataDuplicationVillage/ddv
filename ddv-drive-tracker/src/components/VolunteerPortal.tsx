@@ -12,6 +12,200 @@ interface VolunteerPortalProps {
   onTableUpdateNotification: (tableName: string, action: string, recordId: string) => void;
 }
 
+type LabelVariant = 'tag' | 'ticket';
+
+type LabelCardData = {
+  id: string;
+  source_requested_id?: string;
+  hd_serial?: string | null;
+  received_time?: string | null;
+  hd_image?: string | null;
+};
+
+const LABEL_CARD_STYLE = {
+  width: '100mm',
+  height: '62mm',
+  maxWidth: '100%',
+  aspectRatio: '100 / 62'
+} as const;
+
+const LABEL_CARD_CLASS_NAME = 'w-full aspect-[100/62] rounded-xl p-3.5 flex select-none relative mx-auto overflow-hidden';
+
+const LABEL_VARIANT_CONFIG: Record<LabelVariant, {
+  shellClassName: string;
+  outlineClassName: string;
+  insetBorderClassName: string;
+  guideClassName: string;
+  sizeMarkerClassName: string;
+  ribbonClassName: string;
+  titleClassName: string;
+  badgeText: string;
+  titleText: string;
+  footerText: string;
+  valueTextClassName: string;
+  fieldLabelClassName: string;
+  fieldValueClassName: string;
+  fieldValueSecondaryClassName: string;
+  fieldRowClassName: string;
+  leftBlockClassName: string;
+  leftBlockTextClassName: string;
+  qrBorderClassName: string;
+  imageFallbackClassName: string;
+}> = {
+  tag: {
+    shellClassName: 'bg-white border border-slate-350 text-slate-900 font-mono shadow-md',
+    outlineClassName: 'border-slate-300/70',
+    insetBorderClassName: 'border-slate-200/40',
+    guideClassName: 'bg-slate-200/40',
+    sizeMarkerClassName: 'text-slate-400/90',
+    ribbonClassName: 'border-blue-500 text-blue-600',
+    titleClassName: 'text-slate-400',
+    badgeText: 'Tag #1 (TO DRIVE)',
+    titleText: 'PHYSICAL ASSET TAG',
+    footerText: 'AFFIX SECURELY TO PHYSICAL DRIVE',
+    valueTextClassName: 'text-slate-900',
+    fieldLabelClassName: 'text-slate-500',
+    fieldValueClassName: 'text-blue-600',
+    fieldValueSecondaryClassName: 'text-slate-800',
+    fieldRowClassName: 'text-slate-700',
+    leftBlockClassName: 'bg-blue-600 text-white border-blue-700',
+    leftBlockTextClassName: 'text-[46px]',
+    qrBorderClassName: 'border-slate-300',
+    imageFallbackClassName: 'bg-slate-100 border-slate-200 text-slate-400'
+  },
+  ticket: {
+    shellClassName: 'bg-emerald-50/90 border border-slate-350 text-slate-900 font-mono shadow-md',
+    outlineClassName: 'border-emerald-200/70',
+    insetBorderClassName: 'border-emerald-200/40',
+    guideClassName: 'bg-emerald-200/40',
+    sizeMarkerClassName: 'text-emerald-700/80',
+    ribbonClassName: 'border-emerald-600 text-emerald-700',
+    titleClassName: 'text-emerald-800',
+    badgeText: 'Ticket #2 (CLAIM COPY)',
+    titleText: 'DDV Drive Ticket',
+    footerText: 'Retain receipt to reclaim physical drive.',
+    valueTextClassName: 'text-slate-900',
+    fieldLabelClassName: 'text-slate-700',
+    fieldValueClassName: 'text-emerald-800',
+    fieldValueSecondaryClassName: 'text-emerald-700',
+    fieldRowClassName: 'text-slate-700',
+    leftBlockClassName: 'bg-white border-emerald-200',
+    leftBlockTextClassName: 'text-[46px]',
+    qrBorderClassName: 'border-emerald-200',
+    imageFallbackClassName: 'bg-white border-emerald-200 text-slate-400'
+  }
+};
+
+const PrintLabelCard = React.forwardRef<HTMLDivElement, {
+  variant: LabelVariant;
+  data: LabelCardData;
+  imageSource?: string;
+  className?: string;
+  showSizeMarker?: boolean;
+}>(({ variant, data, imageSource, className, showSizeMarker = true }, ref) => {
+  const displayTime = data.received_time ? new Date(data.received_time).toLocaleString() : new Date().toLocaleString();
+  const fallbackImage = imageSource || data.hd_image || '';
+  const config = LABEL_VARIANT_CONFIG[variant];
+
+  return (
+    <div
+      ref={ref}
+      className={`${LABEL_CARD_CLASS_NAME} ${config.shellClassName} ${className ?? ''}`}
+      style={LABEL_CARD_STYLE}
+    >
+      <div className={`pointer-events-none absolute inset-0 rounded-xl border ${config.outlineClassName}`} />
+      <div className={`pointer-events-none absolute inset-2 rounded-lg border ${config.insetBorderClassName}`} />
+      {variant === 'tag' ? (
+
+        <>
+          <div className="absolute top-1.5 left-2.5 text-left">
+            <span className={`text-[8px] tracking-wider font-extrabold block leading-none uppercase ${config.titleClassName}`}>{config.titleText}</span>
+            <span className={`text-xs sm:text-sm font-black block mt-0.5 tracking-tight leading-none ${config.valueTextClassName}`}>{data.id}</span>
+          </div>
+          <div className="flex h-full w-full items-stretch gap-2.5 pt-6">
+            <div className="flex min-w-0 flex-1 flex-col justify-center pr-2">
+              <div className="flex flex-col items-start justify-center gap-2">
+                <div className="flex items-center justify-start self-start">
+                  {fallbackImage ? (
+                    <img
+                      src={fallbackImage}
+                      alt="Physical drive screenshot"
+                      referrerPolicy="no-referrer"
+                      className={`w-[82px] h-[82px] object-contain rounded border shadow bg-white p-0.5 ${config.qrBorderClassName}`}
+                    />
+                  ) : (
+                    <div className={`w-[82px] h-[82px] rounded flex flex-col items-center justify-center text-[7px] text-center leading-tight ${config.imageFallbackClassName}`}>
+                      NO IMAGE
+                    </div>
+                  )}
+                </div>
+                <div className={`space-y-1.5 text-[8.5px] ${config.fieldRowClassName}`}>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className={`shrink-0 font-bold ${config.titleClassName}`}>SOURCE:</span>
+                    <span className={`font-black ${config.fieldValueClassName}`}>{data.source_requested_id}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className={`shrink-0 font-bold ${config.titleClassName}`}>DRIVE S/N:</span>
+                    <span className={`font-black ${config.fieldValueSecondaryClassName}`}>{data.hd_serial || 'PENDING'}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className={`shrink-0 font-bold ${config.titleClassName}`}>ACCEPTED:</span>
+                    <span className={`font-black ${config.fieldValueSecondaryClassName}`}>{displayTime}</span>
+                  </div>
+                </div>
+              </div>
+              <span className={`mt-2 whitespace-nowrap border-t border-slate-200 pt-1.5 text-[7px] font-sans leading-none uppercase font-bold tracking-tight ${config.titleClassName}`}>
+                {config.footerText}
+              </span>
+            </div>
+            <div className="flex shrink-0 flex-col items-center justify-center gap-2 self-center pl-1">
+              <div className={`flex items-center justify-center bg-white p-1.5 border rounded-lg shrink-0 w-[88px] h-[88px] shadow-sm ${config.qrBorderClassName}`}>
+                <QRCodeSVG value={data.id} size={64} level="M" />
+              </div>
+              <div className={`flex items-center justify-center font-black leading-none rounded-lg w-[88px] h-[88px] shrink-0 shadow border select-none text-[42px] ${config.leftBlockClassName} ${config.leftBlockTextClassName}`}>
+                {data.source_requested_id ? String(data.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex h-full w-full items-stretch justify-between gap-3 text-left flex-1 min-w-0">
+            <div className="flex min-w-0 flex-1 flex-col justify-start pr-2">
+              <div className="flex items-start gap-2">
+                <span className={`text-[18px] tracking-wider font-black block leading-none uppercase ${config.titleClassName}`}>{config.titleText}</span>
+              </div>
+              <div className="flex flex-1 items-center">
+                <div className="w-full">
+                  <span className={`text-xs sm:text-sm font-black block mt-1 tracking-tight break-all leading-tight whitespace-normal ${config.valueTextClassName}`}>{data.id}</span>
+                  <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
+                    <div className="flex items-start gap-1">
+                      <span>SOURCE DATASET:</span>
+                      <span className={`font-extrabold truncate ${config.fieldValueClassName}`}>{data.source_requested_id}</span>
+                    </div>
+                    <div className="flex items-start gap-1">
+                      <span>ACCEPTED AT:</span>
+                      <span className={`font-extrabold truncate ${config.fieldValueSecondaryClassName}`}>{displayTime}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className={`flex items-center justify-center bg-white p-2 border rounded-lg shrink-0 w-[100px] h-[100px] self-center ${config.qrBorderClassName}`}>
+              <QRCodeSVG value={data.id} size={80} level="M" />
+            </div>
+          </div>
+          <span className={`absolute bottom-2 left-2 right-2 whitespace-nowrap border-t border-emerald-600/30 pt-1 text-[15px] font-sans leading-none font-black uppercase ${config.titleClassName}`}>
+            {config.footerText}
+          </span>
+        </>
+      )}
+    </div>
+  );
+});
+
+PrintLabelCard.displayName = 'PrintLabelCard';
+
 export default function VolunteerPortal({
   currentUser,
   onLogout,
@@ -221,13 +415,16 @@ export default function VolunteerPortal({
     return `disk-${seqStr}-${uuid}`;
   };
 
-  // Populate dynamic ID once disks load
+  // Populate a fresh sequence-based ID once the current disk catalog is available.
   useEffect(() => {
-    if (!diskForm.id) {
-      setDiskForm(prev => ({
-        ...prev,
-        id: generateDiskID(disks)
-      }));
+    if (!disks.length) return;
+
+    const currentId = diskForm.id?.trim();
+    if (!currentId || disks.some(d => d.id === currentId)) {
+      const nextId = generateDiskID(disks);
+      if (nextId !== currentId) {
+        setDiskForm(prev => ({ ...prev, id: nextId }));
+      }
     }
   }, [disks, diskForm.id]);
 
@@ -952,7 +1149,10 @@ export default function VolunteerPortal({
   };
 
   const handlePOSIntakeSubmit = async () => {
-        const effectiveDiskId = diskForm.id?.trim() ? diskForm.id : generateDiskID(disks);
+        const trimmedExistingId = diskForm.id?.trim();
+        const effectiveDiskId = trimmedExistingId && !disks.some(d => d.id === trimmedExistingId)
+          ? trimmedExistingId
+          : generateDiskID(disks);
         const effectiveSerial = diskForm.hd_serial?.trim() ? diskForm.hd_serial.trim() : 'N/A';
 
         const selectedSource = datasources.find(s => s.id === diskForm.source_requested_id);
@@ -978,9 +1178,10 @@ export default function VolunteerPortal({
 
     setIsLoading(true);
     try {
+      const nextId = generateDiskID(disks);
       const diskPayload = {
         ...diskForm,
-        id: effectiveDiskId,
+        id: effectiveDiskId && effectiveDiskId !== nextId ? effectiveDiskId : nextId,
         hd_serial: effectiveSerial,
         received_time: new Date().toISOString(),
         status: 'received',
@@ -1001,6 +1202,7 @@ export default function VolunteerPortal({
       }
 
       const createdDisk: Disk = await diskRes.json();
+      setDiskForm(prev => ({ ...prev, id: createdDisk.id }));
       onTableUpdateNotification('disks', 'INSERT', createdDisk.id);
 
       setIntakeSuccessRecord({ disk: createdDisk });
@@ -1195,6 +1397,27 @@ export default function VolunteerPortal({
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+  const addWhiteBleed = (dataUrl: string, bleedPx = 5) => new Promise<string>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width + (bleedPx * 2);
+      canvas.height = img.height + (bleedPx * 2);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas context unavailable for white bleed'));
+        return;
+      }
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, bleedPx, bleedPx);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Failed to load label image for white bleed'));
+    img.src = dataUrl;
+  });
+
   const handleThermalPrint = async () => {
     if (!printedTicketDisk) return;
 
@@ -1203,40 +1426,29 @@ export default function VolunteerPortal({
       return;
     }
 
+    const renderLabelCardToPng = async (cardNode: HTMLDivElement, backgroundColor: string) => {
+      const rect = cardNode.getBoundingClientRect();
+      return toPng(cardNode, {
+        cacheBust: true,
+        pixelRatio: 2,
+        skipAutoScale: true,
+        width: Math.max(1, Math.round(rect.width)),
+        height: Math.max(1, Math.round(rect.height)),
+        canvasWidth: Math.max(1, Math.round(rect.width)),
+        canvasHeight: Math.max(1, Math.round(rect.height)),
+        style: {
+          margin: '0',
+          boxShadow: 'none'
+        },
+        backgroundColor
+      });
+    };
+
     let tagPng = '';
     let ticketPng = '';
     try {
-      const tagRect = tagPrintCardRef.current.getBoundingClientRect();
-      const ticketRect = ticketPrintCardRef.current.getBoundingClientRect();
-
-      tagPng = await toPng(tagPrintCardRef.current, {
-        cacheBust: true,
-        pixelRatio: 2,
-        skipAutoScale: true,
-        width: Math.max(1, Math.round(tagRect.width)),
-        height: Math.max(1, Math.round(tagRect.height)),
-        canvasWidth: Math.max(1, Math.round(tagRect.width)),
-        canvasHeight: Math.max(1, Math.round(tagRect.height)),
-        style: {
-          margin: '0',
-          boxShadow: 'none'
-        },
-        backgroundColor: '#ffffff'
-      });
-      ticketPng = await toPng(ticketPrintCardRef.current, {
-        cacheBust: true,
-        pixelRatio: 2,
-        skipAutoScale: true,
-        width: Math.max(1, Math.round(ticketRect.width)),
-        height: Math.max(1, Math.round(ticketRect.height)),
-        canvasWidth: Math.max(1, Math.round(ticketRect.width)),
-        canvasHeight: Math.max(1, Math.round(ticketRect.height)),
-        style: {
-          margin: '0',
-          boxShadow: 'none'
-        },
-        backgroundColor: '#ecfdf5'
-      });
+      tagPng = await renderLabelCardToPng(tagPrintCardRef.current, '#ffffff');
+      ticketPng = await renderLabelCardToPng(ticketPrintCardRef.current, '#ecfdf5');
     } catch (err) {
       console.error('Failed to generate print images:', err);
       alert('Could not build label images for printing. Please retry.');
@@ -1325,7 +1537,7 @@ export default function VolunteerPortal({
       img.src = dataUrl;
     });
 
-    const normalizeForThermalWidth = (dataUrl: string, targetWidthPx = 496) => new Promise<string>((resolve, reject) => {
+    const normalizeForThermalSize = (dataUrl: string, targetWidthMm = 80, targetHeightMm = 62) => new Promise<string>((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
         if (!img.width || !img.height) {
@@ -1333,8 +1545,9 @@ export default function VolunteerPortal({
           return;
         }
 
-        const scale = targetWidthPx / img.width;
-        const targetHeightPx = Math.max(1, Math.round(img.height * scale));
+        const thermalDpi = 203;
+        const targetWidthPx = Math.max(1, Math.round((targetWidthMm / 25.4) * thermalDpi));
+        const targetHeightPx = Math.max(1, Math.round((targetHeightMm / 25.4) * thermalDpi));
         const canvas = document.createElement('canvas');
         canvas.width = targetWidthPx;
         canvas.height = targetHeightPx;
@@ -1394,8 +1607,8 @@ export default function VolunteerPortal({
       rotatedTicketPng = await rotateImageClockwise(ticketPng);
       const trimmedTagPng = await trimVisibleMargins(rotatedTagPng);
       const trimmedTicketPng = await trimVisibleMargins(rotatedTicketPng);
-      const normalizedTagPng = await normalizeForThermalWidth(trimmedTagPng);
-      const normalizedTicketPng = await normalizeForThermalWidth(trimmedTicketPng);
+      const normalizedTagPng = await normalizeForThermalSize(trimmedTagPng, 62, 100);
+      const normalizedTicketPng = await normalizeForThermalSize(trimmedTicketPng, 62, 100);
       finalTagPng = await applyPrintCalibrationShift(normalizedTagPng, printContentShiftMm, printContentShiftXMm);
       finalTicketPng = await applyPrintCalibrationShift(normalizedTicketPng, printContentShiftMm, printContentShiftXMm);
     } catch (err) {
@@ -1404,22 +1617,23 @@ export default function VolunteerPortal({
       return;
     }
 
-    const printWindow = window.open('', 'ddv-thermal-print-images', 'width=420,height=980');
-    if (!printWindow) {
-      alert('Unable to open print window. Please allow popups and try again.');
-      return;
-    }
-
     const printTopOffsetMm = printSheetOffsetMm;
+    const printOffsetXmm = printSheetOffsetXMm;
 
-    const html = `<!doctype html>
+    const createPrintWindow = (title: string, imageDataUrl: string, altText: string) => {
+      const printWindow = window.open('', title, 'width=420,height=980');
+      if (!printWindow) {
+        throw new Error('Unable to open print window. Please allow popups and try again.');
+      }
+
+      const html = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>DDV Labels</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     @page {
-      size: 62mm auto;
+      size: 62mm 100mm;
       margin: 0;
     }
     html,
@@ -1427,8 +1641,11 @@ export default function VolunteerPortal({
       margin: 0;
       padding: 0;
       width: 62mm;
+      height: 100mm;
       min-width: 62mm;
       max-width: 62mm;
+      min-height: 100mm;
+      max-height: 100mm;
       overflow: hidden;
       background: #ffffff;
     }
@@ -1439,15 +1656,15 @@ export default function VolunteerPortal({
       font-family: Arial, Helvetica, sans-serif;
     }
     .sheet {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
+      display: block;
       width: 100%;
       margin: 0;
       padding: 0;
       position: relative;
-      left: ${printSheetOffsetXMm}mm;
+      left: ${printOffsetXmm}mm;
       top: ${printTopOffsetMm}mm;
+      border: 1px solid #e2e8f0;
+      box-sizing: border-box;
     }
     .label {
       display: block;
@@ -1455,27 +1672,37 @@ export default function VolunteerPortal({
       margin: 0;
       padding: 0;
       overflow: hidden;
-      break-after: page;
-      page-break-after: always;
-    }
-    .label:last-child {
-      break-after: auto;
-      page-break-after: auto;
+      position: relative;
     }
     .label img {
       display: block;
-      width: 100%;
-      max-width: 100%;
-      height: auto;
+      width: 62mm;
+      height: 100mm;
+      max-width: 62mm;
+      max-height: 100mm;
+      object-fit: cover;
       margin: 0;
       padding: 0;
+      background: #ffffff;
+    }
+    .label::after {
+      content: '62 mm × 100 mm';
+      position: absolute;
+      right: 1.5mm;
+      bottom: 1.2mm;
+      font-size: 2.4mm;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      background: rgba(255,255,255,0.85);
+      padding: 0.4mm 1mm;
+      border-radius: 0.8mm;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
   <div class="sheet">
-    <section class="label"><img src="${escapeHtml(finalTagPng)}" alt="Tag" /></section>
-    <section class="label"><img src="${escapeHtml(finalTicketPng)}" alt="Ticket" /></section>
+    <section class="label"><img src="${escapeHtml(imageDataUrl)}" alt="${escapeHtml(altText)}" /></section>
   </div>
   <script>
     window.addEventListener('load', function () {
@@ -1491,9 +1718,20 @@ export default function VolunteerPortal({
 </body>
 </html>`;
 
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+    };
+
+    try {
+      const tagBleedPng = await addWhiteBleed(finalTagPng, 5);
+      const ticketBleedPng = await addWhiteBleed(finalTicketPng, 5);
+      createPrintWindow('ddv-thermal-print-tag', tagBleedPng, 'Tag');
+      createPrintWindow('ddv-thermal-print-ticket', ticketBleedPng, 'Ticket');
+    } catch (err) {
+      console.error('Failed to create print jobs:', err);
+      alert(err instanceof Error ? err.message : 'Unable to open print jobs. Please try again.');
+    }
   };
 
   return (
@@ -1750,10 +1988,6 @@ export default function VolunteerPortal({
                 </div>
 
                 <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-4 text-center space-y-3">
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Deploy real-time Gemini AI vision to automatically extract model codes, storage capacity, and serial keys from physical hard drive stickers:
-                  </p>
-
                   {/* Webcam Interface */}
                   {isWebcamActive ? (
                     <div className="bg-[#111113] border border-blue-900/40 rounded-xl overflow-hidden p-3 max-w-[500px] mx-auto">
@@ -2082,7 +2316,7 @@ export default function VolunteerPortal({
                     >
                       Start Over
                     </button>
-                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">62MM LABEL PRINT READY</span>
+                    <span className="text-[10px] font-mono bg-blue-950/50 text-blue-400 border border-blue-900/40 px-2 py-0.5 rounded">100MM × 62MM LABEL PRINT READY</span>
                   </div>
                 </div>
 
@@ -2175,107 +2409,30 @@ export default function VolunteerPortal({
                       </div>
                     </div>
                     {showIntakePreview && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center justify-center">
-                      
-                      {/* PHYSICAL ASSET TAG - WITH DRIVE CAMERA PHOTO */}
-                      <div className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none mx-auto relative">
-                        <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
-                        
-                        {/* RIGHT JUSTIFIED DRIVE ID ABSOLUTE POSITIONED ABOVE IMAGES */}
-                        <div className="absolute top-1.5 right-2.5 text-right">
-                          <span className="text-[8px] text-slate-400 tracking-wider font-extrabold block leading-none uppercase">PHYSICAL ASSET TAG</span>
-                          <span className="text-xs sm:text-sm font-black text-slate-900 block mt-0.5 tracking-tight leading-none">{diskForm.id}</span>
-                        </div>
-                        
-                        {/* LEFT COLUMN - REQUIRED DATA */}
-                        <div className="flex flex-col justify-center text-left flex-1 min-w-0 pr-1 pt-6 pb-6 relative h-full">
-                          <div className="space-y-1 my-auto text-[9.5px] text-slate-700">
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">SOURCE:</span>
-                              <span className="font-black text-blue-600">{diskForm.source_requested_id}</span>
-                            </div>
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">DRIVE S/N:</span>
-                              <span className="font-black text-slate-800">{diskForm.hd_serial || 'PENDING'}</span>
-                            </div>
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">ACCEPTED:</span>
-                              <span className="font-black text-slate-800">
-                                {diskForm.received_time ? new Date(diskForm.received_time).toLocaleString() : new Date().toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center justify-center">
+                        <PrintLabelCard
+                          variant="tag"
+                          data={{
+                            id: diskForm.id || 'PREVIEW',
+                            source_requested_id: diskForm.source_requested_id || 'PENDING',
+                            hd_serial: diskForm.hd_serial || 'PENDING',
+                            received_time: diskForm.received_time || new Date().toISOString(),
+                            hd_image: intakePreviewImage || null
+                          }}
+                          imageSource={intakePreviewImage || undefined}
+                          className="mx-auto"
+                        />
 
-                          <span className="absolute bottom-0 left-0 text-[7.5px] text-slate-500 font-sans leading-tight border-t border-slate-200 pt-1.5 w-full block uppercase font-bold tracking-tight">
-                            AFFIX SECURELY TO PHYSICAL DRIVE
-                          </span>
-                        </div>
-
-                        {/* RIGHT COLUMN - THREE BLOCKS (15% REDUCED: 68px x 68px) VERTICALLY CENTERED */}
-                        <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
-                          {/* 1. Drive Image */}
-                          <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                            {intakePreviewImage ? (
-                              <img
-                                src={intakePreviewImage}
-                                alt="Drive sticker snapshot"
-                                referrerPolicy="no-referrer"
-                                className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5"
-                              />
-                            ) : (
-                              <div className="w-[68px] h-[68px] bg-slate-100 border border-slate-200 rounded flex flex-col items-center justify-center text-[7px] text-slate-400 text-center leading-tight">
-                                NO IMAGE
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 2. Drive Source Letter (6x size, bold, same height as image: 68px) */}
-                          <div className="flex items-center justify-center bg-blue-600 text-white font-black text-[46px] leading-none rounded-lg w-[68px] h-[68px] shrink-0 shadow border border-blue-700 select-none">
-                            {diskForm.source_requested_id ? String(diskForm.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
-                          </div>
-
-                          {/* 3. QR Code */}
-                          <div className="flex items-center justify-center bg-white p-1.5 border border-slate-300 rounded-lg shrink-0 w-[68px] h-[68px] shadow-sm">
-                            <QRCodeSVG value={diskForm.id} size={54} level="M" />
-                          </div>
-                        </div>
+                        <PrintLabelCard
+                          variant="ticket"
+                          data={{
+                            id: diskForm.id || 'PREVIEW',
+                            source_requested_id: diskForm.source_requested_id || 'PENDING',
+                            received_time: diskForm.received_time || new Date().toISOString()
+                          }}
+                          className="mx-auto"
+                        />
                       </div>
-
-                      {/* DDV DRIVE TICKET (CHANGED NAME & STORAGE FIELD, REMOVED QR LABEL) */}
-                      <div className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
-                        <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
-                        
-                        {/* LEFT COLUMN */}
-                        <div className="flex flex-col justify-between h-full text-left flex-1 min-w-0">
-                          <div>
-                            <span className="text-[9px] text-emerald-800 tracking-wider font-black block leading-none uppercase">DDV Drive Ticket</span>
-                            <span className="text-xs sm:text-sm font-black text-slate-900 block mt-1 tracking-tight break-all leading-tight whitespace-normal">{diskForm.id}</span>
-                          </div>
-                          
-                          <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
-                            <div className="flex justify-between gap-1">
-                              <span className="shrink-0">SOURCE DATASET:</span>
-                              <span className="font-extrabold text-emerald-800 truncate">{diskForm.source_requested_id}</span>
-                            </div>
-                            <div className="flex justify-between gap-1">
-                              <span className="shrink-0">ACCEPTED AT:</span>
-                              <span className="font-extrabold text-emerald-700 truncate">
-                                {diskForm.received_time ? new Date(diskForm.received_time).toLocaleString() : new Date().toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-
-                          <span className="text-[7.5px] text-slate-650 font-sans leading-tight mt-1 border-t border-emerald-600/30 pt-1 block">
-                            Retain receipt to reclaim physical drive.
-                          </span>
-                        </div>
-
-                        {/* RIGHT COLUMN - QR CODE ONLY (NO TEXT LABEL) */}
-                        <div className="flex flex-col items-center justify-center bg-white p-2 border border-emerald-200 rounded-lg shrink-0 w-[95px] h-[95px]">
-                          <QRCodeSVG value={diskForm.id} size={75} level="M" />
-                        </div>
-                      </div>
-                    </div>
                     )}
                   </div>
                 )}
@@ -2354,67 +2511,20 @@ export default function VolunteerPortal({
                 {printedTicketDisk && (
                   <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
                     <div className="space-y-6">
-                      <div ref={tagPrintCardRef} className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto">
-                        <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
-                        <div className="absolute top-1.5 right-2.5 text-right">
-                          <span className="text-[8px] text-slate-400 tracking-wider font-extrabold block leading-none uppercase">PHYSICAL ASSET TAG</span>
-                          <span className="text-xs sm:text-sm font-black text-slate-900 block mt-0.5 tracking-tight leading-none">{printedTicketDisk.id}</span>
-                        </div>
-                        <div className="flex flex-col justify-center text-left flex-1 min-w-0 pr-1 pt-6 pb-6 relative h-full">
-                          <div className="space-y-1 my-auto text-[9.5px] text-slate-700">
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">SOURCE:</span>
-                              <span className="font-black text-blue-600">{printedTicketDisk.source_requested_id}</span>
-                            </div>
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">DRIVE S/N:</span>
-                              <span className="font-black text-slate-800">{printedTicketDisk.hd_serial || 'PENDING'}</span>
-                            </div>
-                            <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                              <span className="shrink-0 text-slate-500 font-bold">ACCEPTED:</span>
-                              <span className="font-black text-slate-800">{printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
-                          <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                            {printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 ? (
-                              <img src={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || ''} alt="Physical drive screenshot" referrerPolicy="no-referrer" className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5" />
-                            ) : (
-                              <div className="w-[68px] h-[68px] bg-slate-100 border border-slate-200 rounded flex flex-col items-center justify-center text-[7px] text-slate-400 text-center leading-tight">NO IMAGE</div>
-                            )}
-                          </div>
-                          <div className="flex items-center justify-center bg-blue-600 text-white font-black text-[46px] leading-none rounded-lg w-[68px] h-[68px] shrink-0 shadow border border-blue-700 select-none">
-                            {printedTicketDisk.source_requested_id ? String(printedTicketDisk.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
-                          </div>
-                          <div className="flex items-center justify-center bg-white p-1.5 border border-slate-300 rounded-lg shrink-0 w-[68px] h-[68px] shadow-sm">
-                            <QRCodeSVG value={printedTicketDisk.id} size={54} level="M" />
-                          </div>
-                        </div>
-                      </div>
+                      <PrintLabelCard
+                        ref={tagPrintCardRef}
+                        variant="tag"
+                        data={printedTicketDisk}
+                        imageSource={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || undefined}
+                        className="mx-auto"
+                      />
 
-                      <div ref={ticketPrintCardRef} className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
-                        <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
-                        <div className="flex flex-col justify-between h-full text-left flex-1 min-w-0">
-                          <div>
-                            <span className="text-[9px] text-emerald-800 tracking-wider font-black block leading-none uppercase">DDV Drive Ticket</span>
-                            <span className="text-xs sm:text-sm font-black text-slate-900 block mt-1 tracking-tight break-all leading-tight whitespace-normal">{printedTicketDisk.id}</span>
-                          </div>
-                          <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
-                            <div className="flex justify-between gap-1">
-                              <span>SOURCE DATASET:</span>
-                              <span className="font-extrabold text-emerald-800 truncate">{printedTicketDisk.source_requested_id}</span>
-                            </div>
-                            <div className="flex justify-between gap-1">
-                              <span>ACCEPTED AT:</span>
-                              <span className="font-extrabold text-emerald-700 truncate">{printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-center justify-center bg-white p-2 border border-emerald-200 rounded-lg shrink-0 w-[95px] h-[95px]">
-                          <QRCodeSVG value={printedTicketDisk.id} size={75} level="M" />
-                        </div>
-                      </div>
+                      <PrintLabelCard
+                        ref={ticketPrintCardRef}
+                        variant="ticket"
+                        data={printedTicketDisk}
+                        className="mx-auto"
+                      />
                     </div>
 
                     <div className="bg-[#0E0E10] border border-[#2A2A2E] rounded-xl p-4 space-y-3">
@@ -2634,7 +2744,7 @@ export default function VolunteerPortal({
                         <div className="space-y-1 text-left">
                           <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5">
                             <span>Target:</span>
-                            <span className="text-white font-extrabold truncate">{sourceDs ? sourceDs.title : 'None'}</span>
+                            <span className="text-white font-extrabold truncate">{sourceDs ? sourceDs.name : 'None'}</span>
                           </div>
                           <div className="text-[10px] text-slate-400 font-mono">
                             Ingested: {activeDiskToReturn.received_time ? new Date(activeDiskToReturn.received_time).toLocaleString() : 'Unknown'}
@@ -2965,7 +3075,7 @@ export default function VolunteerPortal({
           <div className="bg-[#16161A] rounded-xl shadow-2xl overflow-hidden max-w-lg w-full border border-slate-700/50 flex flex-col">
             
             <div className="border-b border-[#2A2A2E] p-4 bg-slate-900/60 text-center relative">
-              <span className="text-[10px] text-emerald-450 border border-emerald-900/40 rounded px-1.5 py-0.5 uppercase tracking-wider font-extrabold font-mono">62MM THERMAL STICKER PRINTER</span>
+              <span className="text-[10px] text-emerald-450 border border-emerald-900/40 rounded px-1.5 py-0.5 uppercase tracking-wider font-extrabold font-mono">100MM × 62MM THERMAL PRINTER</span>
               <h4 className="font-bold text-lg block mt-1.5 font-sans tracking-tight text-white">Tag & Ticket Printing</h4>
               <button 
                 onClick={() => setPrintedTicketDisk(null)}
@@ -2980,106 +3090,34 @@ export default function VolunteerPortal({
               {/* TAG #1: PHYSICAL ASSET TAG */}
               <div className="space-y-1">
                 <span className="text-[9px] text-slate-450 uppercase font-mono tracking-wider font-extrabold block">AFFIX SECURELY TO DRIVE CASING (TAG #1)</span>
-                <div ref={tagPrintCardRef} className="w-full max-w-md min-h-[160px] bg-white border border-slate-350 rounded-xl p-3.5 flex flex-row items-stretch justify-between gap-4 text-slate-900 font-mono shadow-md select-none relative mx-auto">
-                  <div className="absolute top-1.5 left-2.5 text-[7px] border border-blue-500 text-blue-600 font-bold uppercase rounded px-1 leading-none">Tag #1 (TO DRIVE)</div>
-                  
-                  {/* RIGHT JUSTIFIED DRIVE ID ABSOLUTE POSITIONED ABOVE IMAGES */}
-                  <div className="absolute top-1.5 right-2.5 text-right">
-                    <span className="text-[8px] text-slate-400 tracking-wider font-extrabold block leading-none uppercase">PHYSICAL ASSET TAG</span>
-                    <span className="text-xs sm:text-sm font-black text-slate-900 block mt-0.5 tracking-tight leading-none">{printedTicketDisk.id}</span>
-                  </div>
-                  
-                  {/* LEFT COLUMN - REQUIRED DATA */}
-                  <div className="flex flex-col justify-center text-left flex-1 min-w-0 pr-1 pt-6 pb-6 relative h-full">
-                    <div className="space-y-1 my-auto text-[9.5px] text-slate-700">
-                      <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                        <span className="shrink-0 text-slate-500 font-bold">SOURCE:</span>
-                        <span className="font-black text-blue-600">{printedTicketDisk.source_requested_id}</span>
-                      </div>
-                      <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                        <span className="shrink-0 text-slate-500 font-bold">DRIVE S/N:</span>
-                        <span className="font-black text-slate-800">{printedTicketDisk.hd_serial || 'PENDING'}</span>
-                      </div>
-                      <div className="flex justify-start items-center gap-1.5 whitespace-nowrap">
-                        <span className="shrink-0 text-slate-500 font-bold">ACCEPTED:</span>
-                        <span className="font-black text-slate-800">
-                          {printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-
-                    <span className="absolute bottom-0 left-0 text-[7.5px] text-slate-500 font-sans leading-tight border-t border-slate-200 pt-1.5 w-full block uppercase font-bold tracking-tight">
-                      AFFIX SECURELY TO PHYSICAL DRIVE
-                    </span>
-                  </div>
-
-                  {/* RIGHT COLUMN - THREE BLOCKS (15% REDUCED: 68px x 68px) VERTICALLY CENTERED */}
-                  <div className="flex items-center gap-2.5 shrink-0 pl-1.5 self-center mt-3">
-                    {/* 1. Drive Image */}
-                    <div className="flex flex-col items-center justify-center w-[68px] h-[68px] shrink-0">
-                      {printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 ? (
-                        <img
-                          src={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || ''}
-                          alt="Physical drive screenshot"
-                          referrerPolicy="no-referrer"
-                          className="w-[68px] h-[68px] object-contain rounded border border-slate-300 shadow bg-white p-0.5"
-                        />
-                      ) : (
-                        <div className="w-[68px] h-[68px] bg-slate-100 border border-slate-200 rounded flex flex-col items-center justify-center text-[7px] text-slate-400 text-center leading-tight">
-                          NO IMAGE
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 2. Drive Source Letter (6x size, bold, same height as image: 68px) */}
-                    <div className="flex items-center justify-center bg-blue-600 text-white font-black text-[46px] leading-none rounded-lg w-[68px] h-[68px] shrink-0 shadow border border-blue-700 select-none">
-                      {printedTicketDisk.source_requested_id ? String(printedTicketDisk.source_requested_id).trim().slice(-1).toUpperCase() : 'A'}
-                    </div>
-
-                    {/* 3. QR Code */}
-                    <div className="flex items-center justify-center bg-white p-1.5 border border-slate-300 rounded-lg shrink-0 w-[68px] h-[68px] shadow-sm">
-                      <QRCodeSVG value={printedTicketDisk.id} size={54} level="M" />
-                    </div>
-                  </div>
-                </div>
+                <PrintLabelCard
+                  ref={tagPrintCardRef}
+                  variant="tag"
+                  data={{
+                    id: printedTicketDisk.id,
+                    source_requested_id: printedTicketDisk.source_requested_id,
+                    hd_serial: printedTicketDisk.hd_serial || 'PENDING',
+                    received_time: printedTicketDisk.received_time,
+                    hd_image: printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || null
+                  }}
+                  imageSource={printedTicketDisk.hd_image || capturedImageDataUrl || scanImageBase64 || undefined}
+                  className="mx-auto"
+                />
               </div>
 
               {/* TICKET #2: DDV DRIVE TICKET (NO QR CODE LABEL, CONTAINS INTAKE DATE/TIME) */}
               <div className="space-y-1">
                 <span className="text-[9px] text-emerald-450 uppercase font-mono tracking-wider font-extrabold block">GIVE TO PHYSICAL OWNER / REPRESENTATIVE (TICKET #2)</span>
-                <div ref={ticketPrintCardRef} className="w-full max-w-md min-h-[165px] bg-emerald-50/90 border border-slate-350 rounded-xl p-3.5 flex flex-row items-center justify-between gap-3 text-slate-900 font-mono shadow-md select-none mx-auto relative">
-                  <div className="absolute top-1 right-2 text-[7px] border border-emerald-600 text-emerald-700 font-bold uppercase rounded px-1 leading-none">Ticket #2 (CLAIM COPY)</div>
-                  
-                  {/* LEFT COLUMN - REQUIRED DATA */}
-                  <div className="flex flex-col justify-between h-full text-left flex-1 min-w-0">
-                    <div>
-                      <span className="text-[9px] text-emerald-800 tracking-wider font-black block leading-none uppercase">DDV Drive Ticket</span>
-                      <span className="text-xs sm:text-sm font-black text-slate-900 block mt-1 tracking-tight break-all leading-tight whitespace-normal">{printedTicketDisk.id}</span>
-                    </div>
-                    
-                    <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
-                      <div className="flex justify-between gap-1">
-                        <span>SOURCE DATASET:</span>
-                        <span className="font-extrabold text-emerald-800 truncate">{printedTicketDisk.source_requested_id}</span>
-                      </div>
-                      <div className="flex justify-between gap-1">
-                        <span>ACCEPTED AT:</span>
-                        <span className="font-extrabold text-emerald-700 truncate">
-                          {printedTicketDisk.received_time ? new Date(printedTicketDisk.received_time).toLocaleString() : new Date().toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-
-                    <span className="text-[7.5px] text-slate-650 font-sans leading-tight mt-1 border-t border-emerald-600/30 pt-1 block">
-                      Retain receipt to reclaim physical drive.
-                    </span>
-                  </div>
-
-                  {/* RIGHT COLUMN - QR CODE ONLY (NO LABELS) */}
-                  <div className="flex flex-col items-center justify-center bg-white p-2 border border-emerald-200 rounded-lg shrink-0 w-[95px] h-[95px]">
-                    <QRCodeSVG value={printedTicketDisk.id} size={75} level="M" />
-                  </div>
-                </div>
+                <PrintLabelCard
+                  ref={ticketPrintCardRef}
+                  variant="ticket"
+                  data={{
+                    id: printedTicketDisk.id,
+                    source_requested_id: printedTicketDisk.source_requested_id,
+                    received_time: printedTicketDisk.received_time
+                  }}
+                  className="mx-auto"
+                />
               </div>
 
             </div>
@@ -3108,7 +3146,7 @@ export default function VolunteerPortal({
                 onClick={handleThermalPrint}
                 className="flex-1 min-h-12 text-sm font-black text-white bg-blue-600 hover:bg-blue-500 py-3 rounded-xl transition"
               >
-                Print 62mm Labels (Tag + Ticket)
+                Print 100×62mm Labels (Tag + Ticket)
               </button>
               <button
                 onClick={() => setPrintedTicketDisk(null)}

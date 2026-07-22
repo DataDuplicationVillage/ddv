@@ -289,13 +289,16 @@ export default function AdminPortal({
     return `disk-${seqStr}-${uuid}`;
   };
 
-  // Populate dynamic ID once disks load
+  // Populate a fresh sequence-based ID once the current disk catalog is available.
   useEffect(() => {
-    if (disks.length > 0 && !diskForm.id) {
-      setDiskForm(prev => ({
-        ...prev,
-        id: generateDiskID(disks)
-      }));
+    if (!disks.length) return;
+
+    const currentId = diskForm.id?.trim();
+    if (!currentId || disks.some(d => d.id === currentId)) {
+      const nextId = generateDiskID(disks);
+      if (nextId !== currentId) {
+        setDiskForm(prev => ({ ...prev, id: nextId }));
+      }
     }
   }, [disks, diskForm.id]);
 
@@ -417,8 +420,10 @@ export default function AdminPortal({
     }
 
     try {
+      const nextId = generateDiskID(disks);
       const payload = {
         ...diskForm,
+        id: diskForm.id?.trim() && !disks.some(d => d.id === diskForm.id?.trim()) ? diskForm.id.trim() : nextId,
         received_time: diskForm.received_time || new Date().toISOString(),
         copy_start_time: diskForm.status === 'copying' && !diskForm.copy_start_time ? new Date().toISOString() : (diskForm.copy_start_time || null),
         copy_complete_time: diskForm.status === 'completed' && !diskForm.copy_complete_time ? new Date().toISOString() : (diskForm.copy_complete_time || null),
@@ -1402,8 +1407,8 @@ export default function AdminPortal({
                             onClick={() => handleDeleteUser(user.username)}
                             className="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-950/20 rounded transition"
                             title="Delete User"
-                            disabled={user.username.toLowerCase() === 'admin' || (currentUser && currentUser.username.toLowerCase() === user.username.toLowerCase())}
-                            style={{ opacity: (user.username.toLowerCase() === 'admin' || (currentUser && currentUser.username.toLowerCase() === user.username.toLowerCase())) ? 0.3 : 1 }}
+                            disabled={user.username.toLowerCase() === 'admin' || Boolean(currentUser && currentUser.username.toLowerCase() === user.username.toLowerCase())}
+                            style={{ opacity: user.username.toLowerCase() === 'admin' || Boolean(currentUser && currentUser.username.toLowerCase() === user.username.toLowerCase()) ? 0.3 : 1 }}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>

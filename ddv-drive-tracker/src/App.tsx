@@ -148,13 +148,13 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold tracking-tight text-white uppercase font-sans">
-                  DRIVE-OPS
+                  DDV Drive Tracking
                 </h1>
                 <span className="text-blue-500 font-mono font-bold text-[9px] tracking-widest border border-blue-500/30 px-1.5 py-0.5 rounded leading-none uppercase">
                   QUAD-INTERFACE SYSTEM
                 </span>
               </div>
-              <p className="text-[10px] text-slate-500 font-medium font-sans">Django Schema compliance, Barcode labels scanner & Replicated Status Terminal</p>
+              <p className="text-[10px] text-slate-500 font-medium font-sans">Drive intake, thermal label printing, and replicated status tracking</p>
             </div>
           </button>
 

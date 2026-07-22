@@ -158,6 +158,17 @@ class ApiContractTests(TestCase):
         dup_serial = self._create_contract_disk(disk_id='disk-dupe-003', serial='SN-DUPE-001')
         self.assertEqual(dup_serial.status_code, 400)
 
+    def test_disk_create_rejects_duplicate_sequence_number_but_allows_loadtest(self):
+        first = self._create_contract_disk(disk_id='disk-001-AAA111', serial='SN-DUP-SEQ-001')
+        self.assertEqual(first.status_code, 201)
+
+        dup_sequence = self._create_contract_disk(disk_id='disk-001-BBB222', serial='SN-DUP-SEQ-002')
+        self.assertEqual(dup_sequence.status_code, 400)
+        self.assertIn('sequence', dup_sequence.json()['error'].lower())
+
+        loadtest_disk = self._create_contract_disk(disk_id='disk-loadtest-XYZ999', serial='SN-LOADTEST-001')
+        self.assertEqual(loadtest_disk.status_code, 201)
+
     def test_missing_disk_endpoints_return_404_contract(self):
         update_res = self._put_json('/api/disks/not-a-disk', {'status': 'copying'})
         self.assertEqual(update_res.status_code, 404)

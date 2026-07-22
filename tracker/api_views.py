@@ -569,19 +569,48 @@ def api_disks(request):
     return JsonResponse(disks, safe=False)
 
 
+def _extract_disk_sequence_number(disk_id):
+    if not disk_id:
+        return None
+    match = re.match(r'^(?:disk|DISK)-0*(\d+)(?:-|$)', str(disk_id).strip(), re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _is_loadtest_disk_id(disk_id):
+    return str(disk_id or '').strip().lower().startswith('disk-loadtest-')
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 def api_disks_create(request):
     payload = _json_body(request)
-    disk_id = str(payload.get('id', '')).strip() or f'disk-{uuid.uuid4().hex[:12]}'
-    serial = str(payload.get('hd_serial', '')).strip() or 'N/A'
+    disk_id = str(payload.get('id', '') or '').strip()
+    serial = str(payload.get('hd_serial', '') or '').strip()
     status = str(payload.get('status', 'received')).strip()
+
+    if not disk_id:
+        return JsonResponse({'error': 'Disk id is required.'}, status=400)
+
+    if not serial:
+        serial = 'N/A'
 
     if Disk.objects.filter(id=disk_id).exists():
         return JsonResponse({'error': f'Disk with id "{disk_id}" already exists.'}, status=400)
 
     if serial.lower() != 'n/a' and Disk.objects.filter(serial_number__iexact=serial).exists():
         return JsonResponse({'error': f'Disk with serial "{serial}" already exists.'}, status=400)
+
+    sequence_number = _extract_disk_sequence_number(disk_id)
+    if sequence_number is not None and not _is_loadtest_disk_id(disk_id):
+        existing_sequence_numbers = {
+            _extract_disk_sequence_number(existing_id)
+            for existing_id in Disk.objects.values_list('id', flat=True)
+            if _extract_disk_sequence_number(existing_id) is not None
+        }
+        if sequence_number in existing_sequence_numbers:
+            return JsonResponse({'error': f'Disk sequence "{sequence_number}" already exists.'}, status=400)
 
     model = _resolve_or_create_disk_model(payload)
     source = _resolve_datasource(payload.get('source_requested_id'))
