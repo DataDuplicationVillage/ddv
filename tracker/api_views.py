@@ -594,7 +594,7 @@ def api_disks_create(request):
         return JsonResponse({'error': 'Disk id is required.'}, status=400)
 
     if not serial:
-        serial = 'N/A'
+        return JsonResponse({'error': 'Disk serial is required.'}, status=400)
 
     if Disk.objects.filter(id=disk_id).exists():
         return JsonResponse({'error': f'Disk with id "{disk_id}" already exists.'}, status=400)
