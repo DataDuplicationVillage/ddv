@@ -932,10 +932,16 @@ export default function ProcessingDesk({ onTableUpdateNotification }: Processing
                       <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Manufacturer</label>
                       <input
                         type="text"
+                        list="processing-manufacturer-options"
                         value={lookupForm.hd_manufacturer}
                         onChange={(e) => setLookupForm({ ...lookupForm, hd_manufacturer: e.target.value })}
                         className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
+                      <datalist id="processing-manufacturer-options">
+                        {['Seagate', 'Toshiba', 'Western Digital', 'Samsung', 'Dell', 'MDD'].map(option => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
                     </div>
                     <div>
                       <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Model</label>

@@ -58,6 +58,8 @@ export interface Disk {
   pickup_time: string | null; // Date-string or null
   
   status: 'received' | 'copying' | 'completed' | 'failed' | 'picked_up';
+  location?: string | null; // Optional human-readable current location
+  current_location?: string | null; // Optional alias for the current physical location
 
   // Duplicator assignment tracking
   duplicator_id?: string; // Currently used duplicator ID

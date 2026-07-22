@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { toPng } from 'html-to-image';
 import { 
-  Plus, RefreshCw, Barcode, HardDrive, ShieldAlert, Loader2, Info, Camera, Check, Upload, ArrowRight, CheckCircle, Clock, Search
+  Plus, RefreshCw, Barcode, HardDrive, ShieldAlert, Loader2, Info, Camera, Check, Upload, ArrowRight, CheckCircle, Clock, Search, ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
 import { Disk, DataSource, UserRole, Duplicator } from '../types';
 
@@ -206,6 +206,424 @@ const PrintLabelCard = React.forwardRef<HTMLDivElement, {
 
 PrintLabelCard.displayName = 'PrintLabelCard';
 
+export function DriveLookupEditPanel({
+  currentUser,
+  datasources,
+  onTableUpdateNotification,
+  onRefreshDisks,
+  initialLookupQuery = '',
+  onClose
+}: {
+  currentUser: { username: string; name: string; role: UserRole; owner_id?: string } | null;
+  datasources: DataSource[];
+  onTableUpdateNotification: (tableName: string, action: string, recordId: string) => void;
+  onRefreshDisks?: () => void;
+  initialLookupQuery?: string;
+  onClose?: () => void;
+}) {
+  const parseDriveSizeTB = (sizeValue: string) => {
+    const match = String(sizeValue || '').toUpperCase().match(/(\d+(?:\.\d+)?)\s*TB/);
+    return match ? Number(match[1]) : NaN;
+  };
+
+  const getSourceMinSizeTB = (source: DataSource | undefined) => {
+    if (!source?.required_specs?.size_options?.length) return NaN;
+    return parseDriveSizeTB(source.required_specs.size_options[0]);
+  };
+
+  const meetsSourceMinimum = (source: DataSource | undefined, driveSize: string) => {
+    const minTB = getSourceMinSizeTB(source);
+    const driveTB = parseDriveSizeTB(driveSize);
+    if (Number.isNaN(minTB) || Number.isNaN(driveTB)) return true;
+    return driveTB >= minTB;
+  };
+
+  const [lookupQuery, setLookupQuery] = useState(initialLookupQuery);
+  const [lookupTarget, setLookupTarget] = useState<Disk | null>(null);
+  const [lookupResult, setLookupResult] = useState<{ disk: Disk; status_logs: Array<{ id: string; status: string; timestamp: string; operator: string; description: string }> } | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const [isLookupLoading, setIsLookupLoading] = useState(false);
+  const [isLookupSaving, setIsLookupSaving] = useState(false);
+  const [lookupImageZoom, setLookupImageZoom] = useState(1);
+  const [lookupForm, setLookupForm] = useState({
+    id: '',
+    hd_manufacturer: '',
+    hd_model: '',
+    hd_serial: '',
+    hd_size: '8TB',
+    hd_speed: '7200 RPM',
+    source_requested_id: '',
+    status: 'received' as Disk['status'],
+    received_time: '',
+    hd_image: ''
+  });
+
+  useEffect(() => {
+    setLookupImageZoom(1);
+  }, [lookupTarget?.id]);
+
+  const runLookup = async (query: string) => {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return;
+
+    setIsLookupLoading(true);
+    setLookupError('');
+    setLookupTarget(null);
+    setLookupResult(null);
+
+    try {
+      const lookupRes = await fetch(`/api/kiosk/lookup-disk/${encodeURIComponent(normalizedQuery)}`);
+      if (!lookupRes.ok) {
+        throw new Error('Drive record not found. Check the ID or serial number and try again.');
+      }
+
+      const lookupData = await lookupRes.json();
+      if (!lookupData?.found || !lookupData?.disk) {
+        throw new Error('Drive record could not be loaded.');
+      }
+
+      setLookupResult(lookupData);
+      setLookupTarget(lookupData.disk);
+      setLookupForm({
+        id: lookupData.disk.id || '',
+        hd_manufacturer: lookupData.disk.hd_manufacturer || '',
+        hd_model: lookupData.disk.hd_model || '',
+        hd_serial: lookupData.disk.hd_serial || '',
+        hd_size: lookupData.disk.hd_size || '8TB',
+        hd_speed: lookupData.disk.hd_speed || '7200 RPM',
+        source_requested_id: lookupData.disk.source_requested_id || '',
+        status: lookupData.disk.status || 'received',
+        received_time: lookupData.disk.received_time || '',
+        hd_image: lookupData.disk.hd_image || ''
+      });
+    } catch (err: any) {
+      console.error(err);
+      setLookupError(err.message || 'Lookup failed.');
+    } finally {
+      setIsLookupLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (initialLookupQuery?.trim()) {
+      setLookupQuery(initialLookupQuery);
+      void runLookup(initialLookupQuery);
+    }
+  }, [initialLookupQuery]);
+
+  const handleLookupDisk = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    await runLookup(lookupQuery);
+  };
+
+  const handleLookupSave = async () => {
+    if (!lookupTarget) return;
+
+    if (!lookupForm.hd_manufacturer || !lookupForm.hd_model || !lookupForm.hd_serial || !lookupForm.source_requested_id) {
+      alert('Please complete the drive metadata and select a source before saving edits.');
+      return;
+    }
+
+    setIsLookupSaving(true);
+    try {
+      const updateRes = await fetch(`/api/disks/${lookupTarget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hd_manufacturer: lookupForm.hd_manufacturer,
+          hd_model: lookupForm.hd_model,
+          hd_serial: lookupForm.hd_serial,
+          hd_size: lookupForm.hd_size,
+          hd_speed: lookupForm.hd_speed,
+          source_requested_id: lookupForm.source_requested_id,
+          status: lookupForm.status,
+          received_time: lookupForm.received_time || null,
+          hd_image: lookupForm.hd_image || null,
+          operator: currentUser?.username || 'Volunteer Portal'
+        })
+      });
+
+      if (!updateRes.ok) {
+        const err = await updateRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Unable to save drive updates.');
+      }
+
+      const updatedDisk: Disk = await updateRes.json();
+      setLookupTarget(updatedDisk);
+      setLookupForm({
+        id: updatedDisk.id || '',
+        hd_manufacturer: updatedDisk.hd_manufacturer || '',
+        hd_model: updatedDisk.hd_model || '',
+        hd_serial: updatedDisk.hd_serial || '',
+        hd_size: updatedDisk.hd_size || '8TB',
+        hd_speed: updatedDisk.hd_speed || '7200 RPM',
+        source_requested_id: updatedDisk.source_requested_id || '',
+        status: updatedDisk.status || 'received',
+        received_time: updatedDisk.received_time || '',
+        hd_image: updatedDisk.hd_image || ''
+      });
+      setLookupResult(prev => prev ? { ...prev, disk: updatedDisk } : prev);
+      onTableUpdateNotification('disks', 'UPDATE', updatedDisk.id);
+      onRefreshDisks?.();
+      alert(`Drive ${updatedDisk.id} was updated successfully.`);
+      onClose?.();
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to update drive record.');
+    } finally {
+      setIsLookupSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-[#2A2A2E] bg-[#111113] p-4">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold text-white">Drive record editor</h4>
+          <p className="mt-1 text-xs text-slate-400">Lookup a drive by ID or serial number, review its image and metadata, then save corrections here.</p>
+        </div>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs font-bold text-slate-300 transition hover:text-white"
+          >
+            Close
+          </button>
+        ) : null}
+      </div>
+
+      <form onSubmit={handleLookupDisk} className="mb-4 flex flex-col gap-3 sm:flex-row">
+        <label className="flex-1">
+          <span className="sr-only">Drive lookup</span>
+          <input
+            type="text"
+            value={lookupQuery}
+            onChange={(e) => setLookupQuery(e.target.value)}
+            placeholder="Enter drive ID or serial number"
+            className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={isLookupLoading}
+          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50"
+        >
+          {isLookupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+          Lookup
+        </button>
+      </form>
+
+      {lookupError ? (
+        <div className="mb-4 rounded-lg border border-rose-900/40 bg-rose-950/20 p-3 text-xs text-rose-300">
+          {lookupError}
+        </div>
+      ) : null}
+
+      {lookupResult && lookupTarget ? (
+        <div className="space-y-4 rounded-xl border border-[#2A2A2E] bg-[#16161A] p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">Current status</span>
+                <span className="rounded-full border border-blue-900/40 bg-blue-950/40 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-blue-300">
+                  {lookupForm.status}
+                </span>
+              </div>
+              <div className="text-sm font-black text-white">{lookupTarget.id}</div>
+              <div className="text-xs text-slate-400">
+                {lookupTarget.hd_manufacturer} {lookupTarget.hd_model} • S/N {lookupTarget.hd_serial}
+              </div>
+            </div>
+            <div className="text-[10px] text-slate-500 font-mono">
+              <div>Last updated: {lookupTarget.received_time ? new Date(lookupTarget.received_time).toLocaleString() : 'Unknown'}</div>
+              <div className="mt-1">Current location: {lookupTarget.current_location || lookupTarget.location || 'Unknown'}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div className="rounded-xl border border-[#2A2A2E] bg-[#0E0E10] p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-black">Current drive image</span>
+                {lookupTarget.hd_image ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setLookupImageZoom(value => Math.max(1, Number((value - 0.25).toFixed(2))))}
+                      className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                      aria-label="Zoom out"
+                    >
+                      <ZoomOut className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLookupImageZoom(1)}
+                      className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                      aria-label="Reset zoom"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLookupImageZoom(value => Number((value + 0.25).toFixed(2)))}
+                      className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                      aria-label="Zoom in"
+                    >
+                      <ZoomIn className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              {lookupTarget.hd_image ? (
+                <div className="overflow-auto rounded-lg border border-[#2A2A2E] bg-[#060708] p-2">
+                  <div className="flex min-h-[280px] items-center justify-center">
+                    <img
+                      src={lookupTarget.hd_image}
+                      alt="Current drive image"
+                      className="max-h-[280px] w-auto rounded object-contain shadow-sm transition-transform duration-200"
+                      style={{ transform: `scale(${lookupImageZoom})` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-dashed border-[#2A2A2E] bg-[#060708] p-4 text-center text-[11px] text-slate-500">
+                  No drive image saved for this record.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Manufacturer</label>
+                <input
+                  type="text"
+                  list="drive-manufacturer-options"
+                  value={lookupForm.hd_manufacturer}
+                  onChange={(e) => setLookupForm({ ...lookupForm, hd_manufacturer: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <datalist id="drive-manufacturer-options">
+                  {['Seagate', 'Toshiba', 'Western Digital', 'Samsung', 'Dell', 'MDD'].map(option => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Model</label>
+                <input
+                  type="text"
+                  value={lookupForm.hd_model}
+                  onChange={(e) => setLookupForm({ ...lookupForm, hd_model: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Serial number</label>
+                <input
+                  type="text"
+                  value={lookupForm.hd_serial}
+                  onChange={(e) => setLookupForm({ ...lookupForm, hd_serial: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Capacity</label>
+                <select
+                  value={lookupForm.hd_size}
+                  onChange={(e) => setLookupForm({ ...lookupForm, hd_size: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {['4TB', '6TB', '8TB', '10TB', '12TB', '16TB', '18TB', '20TB', '24TB'].map(size => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Speed</label>
+                <input
+                  type="text"
+                  value={lookupForm.hd_speed}
+                  onChange={(e) => setLookupForm({ ...lookupForm, hd_speed: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Source dataset</label>
+                <select
+                  value={lookupForm.source_requested_id}
+                  onChange={(e) => setLookupForm({ ...lookupForm, source_requested_id: e.target.value })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="">Select a source…</option>
+                  {(datasources.length > 0 ? datasources : ['A', 'B', 'C', 'D', 'E'].map(l => ({
+                    id: `DS-${l}`,
+                    name: `Source ${l}`,
+                    description: 'External Allocation',
+                    required_specs: { interface: 'SATA 3', size_options: [l === 'B' || l === 'C' ? '6TB' : '8TB'] }
+                  }))).map(source => (
+                    <option key={source.id} value={source.id}>{source.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Drive status</label>
+                <select
+                  value={lookupForm.status}
+                  onChange={(e) => setLookupForm({ ...lookupForm, status: e.target.value as Disk['status'] })}
+                  className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {['received','copying','completed','failed','picked_up'].map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {lookupForm.source_requested_id ? (() => {
+            const matchingSource = datasources.find(src => src.id === lookupForm.source_requested_id);
+            const isCompatible = meetsSourceMinimum(matchingSource, lookupForm.hd_size);
+            const minTB = getSourceMinSizeTB(matchingSource);
+            return (
+              <div className={`rounded-lg border p-3 text-[11px] ${isCompatible ? 'border-emerald-900/40 bg-emerald-950/20 text-emerald-300' : 'border-amber-900/40 bg-amber-950/20 text-amber-300'}`}>
+                {isCompatible ? 'Drive meets the source minimum size requirement.' : `Selected source requires a minimum drive size of ${Number.isNaN(minTB) ? 'the configured minimum' : `${minTB}TB`}.`}
+              </div>
+            );
+          })() : null}
+
+          <div className="flex flex-col gap-3 border-t border-[#2A2A2E] pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-[10px] text-slate-500 font-mono">
+              {lookupResult?.status_logs?.slice(0, 3).map(log => (
+                <div key={log.id} className="mt-1 first:mt-0">
+                  <span className="text-slate-400">{new Date(log.timestamp).toLocaleString()}</span> • {log.status} • {log.operator}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {onClose ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-4 py-3 text-sm font-bold text-slate-300 transition hover:text-white"
+                >
+                  Cancel Changes
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={isLookupSaving}
+                onClick={handleLookupSave}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {isLookupSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                Save corrections
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function VolunteerPortal({
   currentUser,
   onLogout,
@@ -265,6 +683,7 @@ export default function VolunteerPortal({
   const [lookupError, setLookupError] = useState('');
   const [isLookupLoading, setIsLookupLoading] = useState(false);
   const [isLookupSaving, setIsLookupSaving] = useState(false);
+  const [lookupImageZoom, setLookupImageZoom] = useState(1);
   const [lookupForm, setLookupForm] = useState({
     id: '',
     hd_manufacturer: '',
@@ -280,6 +699,10 @@ export default function VolunteerPortal({
 
   // Active sub-tab within POS: 'intake' | 'edit' | 'return' | 'reprint'
   const [posTab, setPosTab] = useState<'intake' | 'edit' | 'return' | 'reprint'>('intake');
+
+  useEffect(() => {
+    setLookupImageZoom(1);
+  }, [lookupTarget?.id]);
   
   // Search state for print/reprint and return tabs
   const [reprintSearchQuery, setReprintSearchQuery] = useState('');
@@ -1841,20 +2264,77 @@ export default function VolunteerPortal({
                       </div>
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono">
-                      Last updated: {lookupTarget.received_time ? new Date(lookupTarget.received_time).toLocaleString() : 'Unknown'}
+                      <div>Last updated: {lookupTarget.received_time ? new Date(lookupTarget.received_time).toLocaleString() : 'Unknown'}</div>
+                      <div className="mt-1">Current location: {lookupTarget.current_location || lookupTarget.location || 'Unknown'}</div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                    <div className="rounded-xl border border-[#2A2A2E] bg-[#0E0E10] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 font-black">Current drive image</span>
+                        {lookupTarget.hd_image ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setLookupImageZoom(value => Math.max(1, Number((value - 0.25).toFixed(2))))}
+                              className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                              aria-label="Zoom out"
+                            >
+                              <ZoomOut className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLookupImageZoom(1)}
+                              className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                              aria-label="Reset zoom"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLookupImageZoom(value => Number((value + 0.25).toFixed(2)))}
+                              className="rounded border border-[#2A2A2E] bg-[#111113] p-1 text-slate-400 transition hover:text-white"
+                              aria-label="Zoom in"
+                            >
+                              <ZoomIn className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                      {lookupTarget.hd_image ? (
+                        <div className="overflow-auto rounded-lg border border-[#2A2A2E] bg-[#060708] p-2">
+                          <div className="flex min-h-[280px] items-center justify-center">
+                            <img
+                              src={lookupTarget.hd_image}
+                              alt="Current drive image"
+                              className="max-h-[280px] w-auto rounded object-contain shadow-sm transition-transform duration-200"
+                              style={{ transform: `scale(${lookupImageZoom})` }}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-dashed border-[#2A2A2E] bg-[#060708] p-4 text-center text-[11px] text-slate-500">
+                          No drive image saved for this record.
+                        </div>
+                      )}
+                    </div>
+
                     <div className="space-y-3">
                       <div>
                         <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Manufacturer</label>
                         <input
                           type="text"
+                          list="volunteer-manufacturer-options"
                           value={lookupForm.hd_manufacturer}
                           onChange={(e) => setLookupForm({ ...lookupForm, hd_manufacturer: e.target.value })}
                           className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
+                        <datalist id="volunteer-manufacturer-options">
+                          {['Seagate', 'Toshiba', 'Western Digital', 'Samsung', 'Dell', 'MDD'].map(option => (
+                            <option key={option} value={option} />
+                          ))}
+                        </datalist>
                       </div>
                       <div>
                         <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Model</label>
@@ -1874,9 +2354,6 @@ export default function VolunteerPortal({
                           className="w-full rounded-lg border border-[#2A2A2E] bg-[#0E0E10] px-3 py-2 text-xs text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
                       </div>
-                    </div>
-
-                    <div className="space-y-3">
                       <div>
                         <label className="mb-1 block text-[10px] font-mono uppercase text-slate-400 font-black">Capacity</label>
                         <select
@@ -2209,10 +2686,16 @@ export default function VolunteerPortal({
                             <label className="block text-[10px] font-mono text-slate-400 uppercase font-black mb-1">Manufacturer</label>
                             <input
                               type="text"
+                              list="volunteer-manufacturer-options"
                               value={diskForm.hd_manufacturer}
                               onChange={(e) => setDiskForm({...diskForm, hd_manufacturer: e.target.value})}
                               className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-blue-500"
                             />
+                            <datalist id="volunteer-manufacturer-options">
+                              {['Seagate', 'Toshiba', 'Western Digital', 'Samsung', 'Dell', 'MDD'].map(option => (
+                                <option key={option} value={option} />
+                              ))}
+                            </datalist>
                           </div>
                           <div>
                             <label className="block text-[10px] font-mono text-slate-400 uppercase font-black mb-1">Model / Product Identifier</label>

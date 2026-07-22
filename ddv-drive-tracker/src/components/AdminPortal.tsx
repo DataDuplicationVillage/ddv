@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   AreaChart, Area
 } from 'recharts';
 import { 
   Database, Plus, Trash2, Edit3, HelpCircle, RefreshCw, Barcode, HardDrive, 
   Layers, ShieldAlert, FileText, Check, Loader2, Info, ArrowUpRight, TrendingUp,
-  Activity, Users, Lock, Unlock
+  Activity, Users, Lock, Unlock, Download
 } from 'lucide-react';
 import { Disk, DataSource, UserRole, User, Duplicator } from '../types';
+import { DriveLookupEditPanel } from './VolunteerPortal';
 
 interface AdminPortalProps {
   currentUser: { username: string; name: string; role: UserRole; owner_id?: string } | null;
@@ -91,6 +92,7 @@ export default function AdminPortal({
 
   // Add/Edit Modal states
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDriveEditorModal, setShowDriveEditorModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // Disk Form State
@@ -522,6 +524,8 @@ export default function AdminPortal({
   const openEdit = (tabName: typeof activeTab, record: any) => {
     setEditingId(record.id);
     if (tabName === 'disks') {
+      setShowAddModal(false);
+      setShowDriveEditorModal(true);
       const r = record as Disk;
       setDiskForm({
         id: r.id,
@@ -670,12 +674,90 @@ export default function AdminPortal({
     new Set(disks.map(d => getReportComponentValue(d, reportComponent)).filter(Boolean))
   ).sort();
 
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const matchesDriveFilter = (diskId: string, filterText: string) => {
+    const trimmed = filterText.trim();
+    if (!trimmed) return true;
+
+    const normalizedDiskId = diskId.toLowerCase();
+    const normalizedFilter = trimmed.toLowerCase();
+
+    if (normalizedFilter.includes('*') || normalizedFilter.includes('?')) {
+      const regex = new RegExp(`^${escapeRegExp(normalizedFilter).replace(/\\\*/g, '.*').replace(/\\\?/g, '.')}$`);
+      return regex.test(normalizedDiskId);
+    }
+
+    const rangeMatch = normalizedFilter.match(/^(.*?)((?:\d+))(?:\.\.|-|:)(\d+)$/);
+    if (rangeMatch) {
+      const [, prefix, startValue, endValue] = rangeMatch;
+      const start = Number(startValue);
+      const end = Number(endValue);
+      if (Number.isNaN(start) || Number.isNaN(end)) return false;
+
+      const idMatch = normalizedDiskId.match(new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`));
+      if (!idMatch) return false;
+
+      const diskNumber = Number(idMatch[1]);
+      const lower = Math.min(start, end);
+      const upper = Math.max(start, end);
+      return diskNumber >= lower && diskNumber <= upper;
+    }
+
+    return normalizedDiskId.includes(normalizedFilter);
+  };
+
   const filteredReportDisks = disks.filter(disk => {
-    const driveMatch = !reportDriveId.trim() || disk.id.toLowerCase().includes(reportDriveId.trim().toLowerCase());
+    const driveMatch = matchesDriveFilter(disk.id, reportDriveId);
     if (!driveMatch) return false;
     if (reportComponent === 'all' || reportValue === 'all') return true;
     return getReportComponentValue(disk, reportComponent) === reportValue;
   });
+
+  const exportReportCsv = () => {
+    const rows = filteredReportDisks.map(disk => ({
+      id: disk.id,
+      status: disk.status,
+      hd_manufacturer: disk.hd_manufacturer,
+      hd_model: disk.hd_model,
+      hd_serial: disk.hd_serial,
+      hd_size: disk.hd_size,
+      hd_speed: disk.hd_speed,
+      source_requested_id: disk.source_requested_id,
+      received_time: disk.received_time || '',
+      copy_start_time: disk.copy_start_time || '',
+      copy_complete_time: disk.copy_complete_time || '',
+      copy_fail_time: disk.copy_fail_time || '',
+      pickup_time: disk.pickup_time || '',
+      duplicator_id: disk.duplicator_id || '',
+      location: getDiskLocation(disk)
+    }));
+
+    const headers = ['id', 'status', 'hd_manufacturer', 'hd_model', 'hd_serial', 'hd_size', 'hd_speed', 'source_requested_id', 'received_time', 'copy_start_time', 'copy_complete_time', 'copy_fail_time', 'pickup_time', 'duplicator_id', 'location'];
+
+    const escapeCsvValue = (value: unknown) => {
+      const text = String(value ?? '');
+      if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    };
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => headers.map(header => escapeCsvValue(row[header as keyof typeof row])).join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `drive-timeline-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   // Generate Reports Analytics in 4-hour increments
   const getReportsData = () => {
@@ -780,6 +862,42 @@ export default function AdminPortal({
   };
 
   const statusDistribution = getStatusDistribution();
+
+  const getSourceDistribution = () => {
+    const counts: Record<string, number> = {};
+    filteredReportDisks.forEach(d => {
+      const source = (d.source_requested_id || 'Unspecified').trim() || 'Unspecified';
+      counts[source] = (counts[source] || 0) + 1;
+    });
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count], index) => ({
+        name,
+        count,
+        fill: ['#60A5FA', '#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#14B8A6', '#A78BFA'][index % 8]
+      }));
+  };
+
+  const sourceDistribution = getSourceDistribution();
+
+  const getManufacturerDistribution = () => {
+    const counts: Record<string, number> = {};
+    filteredReportDisks.forEach(d => {
+      const manufacturer = (d.hd_manufacturer || 'Unknown').trim() || 'Unknown';
+      counts[manufacturer] = (counts[manufacturer] || 0) + 1;
+    });
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count], index) => ({
+        name,
+        count,
+        fill: ['#60A5FA', '#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#14B8A6', '#A78BFA'][index % 8]
+      }));
+  };
+
+  const manufacturerDistribution = getManufacturerDistribution();
 
   return (
     <div className="space-y-6">
@@ -1124,13 +1242,16 @@ export default function AdminPortal({
       {activeTab === 'reports' && (
         <div className="space-y-6">
           <div className="bg-[#111113] border border-[#2A2A2E] p-4 rounded-xl grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
-              type="text"
-              value={reportDriveId}
-              onChange={(e) => setReportDriveId(e.target.value)}
-              placeholder="Filter by drive ID timeline"
-              className="bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
+            <div className="space-y-1 md:col-span-2">
+              <input
+                type="text"
+                value={reportDriveId}
+                onChange={(e) => setReportDriveId(e.target.value)}
+                placeholder="Filter drive IDs (wildcards * ? or ranges like 100-120)"
+                className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              />
+              <p className="text-[10px] text-slate-500 font-mono">Supports wildcard matching and numeric ranges such as DRV-001..005 or 100-120.</p>
+            </div>
             <select
               value={reportComponent}
               onChange={(e) => {
@@ -1160,8 +1281,18 @@ export default function AdminPortal({
                 <option key={v} value={v}>{v}</option>
               ))}
             </select>
-            <div className="text-[10px] font-mono text-slate-400 flex items-center justify-end">
-              Reporting on {filteredReportDisks.length} drives
+            <div className="flex flex-col items-end justify-between gap-2">
+              <div className="text-[10px] font-mono text-slate-400">
+                Reporting on {filteredReportDisks.length} drives
+              </div>
+              <button
+                type="button"
+                onClick={exportReportCsv}
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-700/50 bg-emerald-950/40 px-3 py-2 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/40"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </button>
             </div>
           </div>
 
@@ -1204,9 +1335,9 @@ export default function AdminPortal({
 
             <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-4.5 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">In Duplication Pipe</span>
+                <span className="text-[10px] text-slate-500 font-mono block uppercase font-bold">Copy in Progress</span>
                 <span className="text-2xl font-black text-white block mt-1">
-                  {filteredReportDisks.filter(d => d.status === 'received' || d.status === 'copying').length}
+                  {filteredReportDisks.filter(d => d.status === 'copying').length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-emerald-950/40 border border-emerald-900/30 rounded-lg flex items-center justify-center text-emerald-400">
@@ -1262,6 +1393,10 @@ export default function AdminPortal({
                           <stop offset="5%" stopColor="#60A5FA" stopOpacity={0.2}/>
                           <stop offset="95%" stopColor="#60A5FA" stopOpacity={0}/>
                         </linearGradient>
+                        <linearGradient id="colorCopying" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                        </linearGradient>
                         <linearGradient id="colorCompleted" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#10B981" stopOpacity={0.2}/>
                           <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
@@ -1277,6 +1412,7 @@ export default function AdminPortal({
                       <Tooltip contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
                       <Legend />
                       <Area type="monotone" dataKey="Accepted Drives" stroke="#60A5FA" strokeWidth={2} fillOpacity={1} fill="url(#colorAccepted)" />
+                      <Area type="monotone" dataKey="In Progress (Copying)" stroke="#3B82F6" strokeWidth={2} fillOpacity={1} fill="url(#colorCopying)" />
                       <Area type="monotone" dataKey="Completed Duplications" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorCompleted)" />
                       <Area type="monotone" dataKey="Returned to Clients" stroke="#8B5CF6" strokeWidth={2} fillOpacity={1} fill="url(#colorReturned)" />
                     </AreaChart>
@@ -1311,10 +1447,10 @@ export default function AdminPortal({
                         <YAxis stroke="#7F7F8F" />
                         <Tooltip cursor={{ fill: '#2A2A2E', opacity: 0.2 }} contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
                         <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                          {statusDistribution.map((entry, index) => (
-                            <Bar key={`bar-${index}`} fill={entry.fill} dataKey="count" />
-                          ))}
-                        </Bar>
+                        {statusDistribution.map((entry, index) => (
+                          <Cell key={`bar-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -1336,6 +1472,76 @@ export default function AdminPortal({
               )}
             </div>
 
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <Layers className="h-4 w-4 text-emerald-400" />
+                    Drives by Source
+                  </h4>
+                  <p className="text-[11px] text-slate-400">Count of drives grouped by the selected source request</p>
+                </div>
+              </div>
+
+              {sourceDistribution.length > 0 ? (
+                <div className="h-[300px] w-full text-xs">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={sourceDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2E" />
+                      <XAxis dataKey="name" stroke="#7F7F8F" angle={-15} textAnchor="end" interval={0} minTickGap={10} />
+                      <YAxis stroke="#7F7F8F" />
+                      <Tooltip contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {sourceDistribution.map((entry, index) => (
+                          <Cell key={`source-bar-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-xs text-slate-500 font-mono bg-[#0E0E10] border border-dashed border-[#2A2A2E] rounded-xl">
+                  No source data available for the current filter.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-[#16161A] border border-[#2A2A2E] rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-[#2A2A2E] pb-3">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <HardDrive className="h-4 w-4 text-emerald-400" />
+                    Drives by Manufacturer
+                  </h4>
+                  <p className="text-[11px] text-slate-400">Count of drives grouped by manufacturer</p>
+                </div>
+              </div>
+
+              {manufacturerDistribution.length > 0 ? (
+                <div className="h-[300px] w-full text-xs">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={manufacturerDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2E" />
+                      <XAxis dataKey="name" stroke="#7F7F8F" angle={-15} textAnchor="end" interval={0} minTickGap={10} />
+                      <YAxis stroke="#7F7F8F" />
+                      <Tooltip contentStyle={{ backgroundColor: '#111113', borderColor: '#2A2A2E', color: '#fff' }} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                        {manufacturerDistribution.map((entry, index) => (
+                          <Cell key={`manufacturer-bar-${index}`} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-xs text-slate-500 font-mono bg-[#0E0E10] border border-dashed border-[#2A2A2E] rounded-xl">
+                  No manufacturer data available for the current filter.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1518,23 +1724,46 @@ export default function AdminPortal({
       )}
 
       {/* ADD / EDIT MODAL */}
-      {showAddModal && (
+      {(showAddModal || showDriveEditorModal) && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#16161A] border border-slate-700/50 rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+          <div className={`bg-[#16161A] border border-slate-700/50 rounded-xl shadow-2xl overflow-hidden ${activeTab === 'disks' && showDriveEditorModal ? 'max-w-6xl w-full' : 'max-w-md w-full'}`}>
             <div className="bg-slate-900/60 p-4 border-b border-[#2A2A2E] flex justify-between items-center">
               <h4 className="text-sm font-bold text-white uppercase tracking-wider font-sans">
-                {editingId ? `Edit ${activeTab === 'disks' ? 'Drive Record' : activeTab === 'duplicators' ? 'Duplicator' : 'Dataset Source'}` : `Create New ${activeTab === 'disks' ? 'Drive Record' : activeTab === 'duplicators' ? 'Duplicator' : 'Dataset Source'}`}
+                {activeTab === 'disks' && showDriveEditorModal
+                  ? 'Edit Drive Record'
+                  : editingId
+                    ? `Edit ${activeTab === 'duplicators' ? 'Duplicator' : 'Dataset Source'}`
+                    : `Create New ${activeTab === 'disks' ? 'Drive Record' : activeTab === 'duplicators' ? 'Duplicator' : 'Dataset Source'}`}
               </h4>
               <button
-                onClick={() => setShowAddModal(false)}
+                onClick={() => {
+                  setShowAddModal(false);
+                  setShowDriveEditorModal(false);
+                  setEditingId(null);
+                }}
                 className="text-slate-400 hover:text-slate-200 font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={activeTab === 'disks' ? handleDiskSubmit : activeTab === 'duplicators' ? handleDuplicatorSubmit : handleSourceSubmit} className="p-5 space-y-4">
-              {activeTab === 'disks' ? (
+            {activeTab === 'disks' && showDriveEditorModal ? (
+              <div className="p-4">
+                <DriveLookupEditPanel
+                  currentUser={currentUser}
+                  datasources={datasources}
+                  onTableUpdateNotification={onTableUpdateNotification}
+                  onRefreshDisks={fetchAllData}
+                  initialLookupQuery={editingId || ''}
+                  onClose={() => {
+                    setShowDriveEditorModal(false);
+                    setEditingId(null);
+                  }}
+                />
+              </div>
+            ) : (
+              <form onSubmit={activeTab === 'disks' ? handleDiskSubmit : activeTab === 'duplicators' ? handleDuplicatorSubmit : handleSourceSubmit} className="p-5 space-y-4">
+                {activeTab === 'disks' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Disk Sequence ID</label>
@@ -1551,11 +1780,17 @@ export default function AdminPortal({
                     <label className="block text-[10px] font-mono uppercase font-black text-slate-400">Manufacturer</label>
                     <input
                       type="text"
+                      list="admin-manufacturer-options"
                       required
                       value={diskForm.hd_manufacturer}
                       onChange={(e) => setDiskForm({...diskForm, hd_manufacturer: e.target.value})}
                       className="w-full bg-[#0E0E10] border border-[#2A2A2E] rounded-lg px-3 py-2 text-xs text-white focus:ring-1 focus:ring-emerald-500"
                     />
+                    <datalist id="admin-manufacturer-options">
+                      {['Seagate', 'Toshiba', 'Western Digital', 'Samsung', 'Dell', 'MDD'].map(option => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
                   </div>
 
                   <div className="space-y-1">
@@ -1744,22 +1979,23 @@ export default function AdminPortal({
                 </>
               )}
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-[#2A2A2E]">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-[#0E0E10] border border-[#2A2A2E] text-slate-300 hover:text-white text-xs font-bold rounded-lg cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg cursor-pointer shadow-md"
-                >
-                  Save Changes
-                </button>
-              </div>
-            </form>
+                <div className="flex justify-end gap-2 pt-3 border-t border-[#2A2A2E]">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(false)}
+                    className="px-4 py-2 bg-[#0E0E10] border border-[#2A2A2E] text-slate-300 hover:text-white text-xs font-bold rounded-lg cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg cursor-pointer shadow-md"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
