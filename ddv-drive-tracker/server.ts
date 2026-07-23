@@ -1,6 +1,8 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { execFile } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
@@ -12,6 +14,60 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const DB_FILE = path.join(process.cwd(), 'db.json');
+
+type LpPrintJob = {
+  pdf_base64: string;
+  job_name?: string;
+};
+
+function isUbuntuHost(): boolean {
+  if (process.platform !== 'linux') {
+    return false;
+  }
+
+  try {
+    const osReleasePath = '/etc/os-release';
+    if (!fs.existsSync(osReleasePath)) {
+      return false;
+    }
+    const content = fs.readFileSync(osReleasePath, 'utf-8').toLowerCase();
+    return content.includes('id=ubuntu') || content.includes('id_like=ubuntu');
+  } catch {
+    return false;
+  }
+}
+
+function decodeBase64Pdf(pdfBase64: string): Buffer {
+  const cleaned = String(pdfBase64 || '').replace(/^data:application\/pdf;base64,/, '').trim();
+  if (!cleaned) {
+    throw new Error('Missing PDF payload.');
+  }
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(cleaned)) {
+    throw new Error('Invalid PDF payload encoding.');
+  }
+
+  const buffer = Buffer.from(cleaned, 'base64');
+  if (buffer.length < 8 || buffer.subarray(0, 4).toString('utf-8') !== '%PDF') {
+    throw new Error('Payload is not a valid PDF document.');
+  }
+  return buffer;
+}
+
+function sanitizeLpToken(value: string): string {
+  return String(value || '').replace(/[^a-zA-Z0-9_.:\-]/g, '').slice(0, 64);
+}
+
+function runLp(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('lp', args, { timeout: 20000 }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error((stderr || error.message || 'lp failed').trim()));
+        return;
+      }
+      resolve(String(stdout || '').trim());
+    });
+  });
+}
 
 function normalizeRequiredSpecs(specs: any): { interface: string; size_options: string[] } {
   const safeSpecs = specs || {};
@@ -45,6 +101,75 @@ function normalizeDataSource(source: any): DataSource {
 
 // Middleware to parse JSON
 app.use(express.json({ limit: '10mb' }));
+
+// Ubuntu direct print path: receive PDF payload and submit print jobs via lp.
+app.post('/api/print/lp', async (req, res) => {
+  if (!isUbuntuHost()) {
+    return res.status(400).json({
+      success: false,
+      error: 'Direct lp printing is only available on Ubuntu Linux hosts.'
+    });
+  }
+
+  const incomingJobs = Array.isArray(req.body?.jobs) ? req.body.jobs : [];
+  if (!incomingJobs.length) {
+    return res.status(400).json({ success: false, error: 'At least one PDF print job is required.' });
+  }
+  if (incomingJobs.length > 4) {
+    return res.status(400).json({ success: false, error: 'Too many print jobs in a single request.' });
+  }
+
+  const printer = sanitizeLpToken(String(req.body?.printer || ''));
+  const jobs: LpPrintJob[] = incomingJobs;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ddv-print-'));
+  const createdFiles: string[] = [];
+  const accepted: Array<{ job_name: string; lp_response: string }> = [];
+
+  try {
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
+      const jobName = sanitizeLpToken(job?.job_name || `ddv-label-${Date.now()}-${i + 1}`) || `ddv-label-${i + 1}`;
+      const buffer = decodeBase64Pdf(job?.pdf_base64 || '');
+      const filePath = path.join(tmpDir, `${jobName}.pdf`);
+      fs.writeFileSync(filePath, buffer);
+      createdFiles.push(filePath);
+
+      const lpArgs: string[] = [];
+      if (printer) {
+        lpArgs.push('-d', printer);
+      }
+      lpArgs.push('-t', jobName, filePath);
+
+      const lpResponse = await runLp(lpArgs);
+      accepted.push({ job_name: jobName, lp_response: lpResponse });
+    }
+
+    return res.json({ success: true, accepted });
+  } catch (error) {
+    console.error('Direct lp print failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to submit print job to lp.'
+    });
+  } finally {
+    for (const filePath of createdFiles) {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch {
+        // Ignore cleanup errors.
+      }
+    }
+    try {
+      if (fs.existsSync(tmpDir)) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore cleanup errors.
+    }
+  }
+});
 
 // Initial State Creator
 function createInitialState(): ServerState {

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 import { 
   Plus, RefreshCw, Barcode, HardDrive, ShieldAlert, Loader2, Info, Camera, Check, Upload, ArrowRight, CheckCircle, Clock, Search, ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
@@ -31,6 +32,62 @@ const LABEL_CARD_STYLE = {
 
 const LABEL_CARD_CLASS_NAME = 'w-full aspect-[100/62] rounded-xl p-3.5 flex select-none relative mx-auto overflow-hidden';
 
+const FitInlineText = ({
+  text,
+  className,
+  maxPx,
+  minPx,
+}: {
+  text: string;
+  className?: string;
+  maxPx: number;
+  minPx: number;
+}) => {
+  const ref = useRef<HTMLSpanElement | null>(null);
+  const [fontPx, setFontPx] = useState(maxPx);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const fit = () => {
+      let next = maxPx;
+      el.style.fontSize = `${next}px`;
+      while (el.scrollWidth > el.clientWidth && next > minPx) {
+        next -= 0.5;
+        el.style.fontSize = `${next}px`;
+      }
+      setFontPx(next);
+    };
+
+    fit();
+
+    const observer = new ResizeObserver(() => fit());
+    observer.observe(el);
+    if (el.parentElement) {
+      observer.observe(el.parentElement);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [text, maxPx, minPx]);
+
+  return (
+    <span
+      ref={ref}
+      className={className}
+      style={{
+        fontSize: `${fontPx}px`,
+        whiteSpace: 'nowrap',
+        display: 'block',
+      }}
+    >
+      {text}
+    </span>
+  );
+};
+
 const LABEL_VARIANT_CONFIG: Record<LabelVariant, {
   shellClassName: string;
   outlineClassName: string;
@@ -53,46 +110,46 @@ const LABEL_VARIANT_CONFIG: Record<LabelVariant, {
   imageFallbackClassName: string;
 }> = {
   tag: {
-    shellClassName: 'bg-white border border-slate-350 text-slate-900 font-mono shadow-md',
-    outlineClassName: 'border-slate-300/70',
-    insetBorderClassName: 'border-slate-200/40',
-    guideClassName: 'bg-slate-200/40',
-    sizeMarkerClassName: 'text-slate-400/90',
-    ribbonClassName: 'border-blue-500 text-blue-600',
-    titleClassName: 'text-slate-400',
+    shellClassName: 'bg-white border border-black text-black font-mono shadow-md',
+    outlineClassName: 'border-black',
+    insetBorderClassName: 'border-black',
+    guideClassName: 'bg-black',
+    sizeMarkerClassName: 'text-black',
+    ribbonClassName: 'border-black text-black',
+    titleClassName: 'text-black',
     badgeText: 'Tag #1 (TO DRIVE)',
     titleText: 'PHYSICAL ASSET TAG',
     footerText: 'AFFIX SECURELY TO PHYSICAL DRIVE',
-    valueTextClassName: 'text-slate-900',
-    fieldLabelClassName: 'text-slate-500',
-    fieldValueClassName: 'text-blue-600',
-    fieldValueSecondaryClassName: 'text-slate-800',
-    fieldRowClassName: 'text-slate-700',
-    leftBlockClassName: 'bg-blue-600 text-white border-blue-700',
-    leftBlockTextClassName: 'text-[46px]',
-    qrBorderClassName: 'border-slate-300',
-    imageFallbackClassName: 'bg-slate-100 border-slate-200 text-slate-400'
+    valueTextClassName: 'text-black',
+    fieldLabelClassName: 'text-black',
+    fieldValueClassName: 'text-black',
+    fieldValueSecondaryClassName: 'text-black',
+    fieldRowClassName: 'text-black',
+    leftBlockClassName: 'bg-[#B3B3B3] text-black border-black',
+    leftBlockTextClassName: 'text-[49px]',
+    qrBorderClassName: 'border-black',
+    imageFallbackClassName: 'bg-white border-black text-black'
   },
   ticket: {
-    shellClassName: 'bg-emerald-50/90 border border-slate-350 text-slate-900 font-mono shadow-md',
-    outlineClassName: 'border-emerald-200/70',
-    insetBorderClassName: 'border-emerald-200/40',
-    guideClassName: 'bg-emerald-200/40',
-    sizeMarkerClassName: 'text-emerald-700/80',
-    ribbonClassName: 'border-emerald-600 text-emerald-700',
-    titleClassName: 'text-emerald-800',
+    shellClassName: 'bg-white border border-black text-black font-mono shadow-md',
+    outlineClassName: 'border-black',
+    insetBorderClassName: 'border-black',
+    guideClassName: 'bg-black',
+    sizeMarkerClassName: 'text-black',
+    ribbonClassName: 'border-black text-black',
+    titleClassName: 'text-black',
     badgeText: 'Ticket #2 (CLAIM COPY)',
     titleText: 'DDV Drive Ticket',
     footerText: 'Retain receipt to reclaim physical drive.',
-    valueTextClassName: 'text-slate-900',
-    fieldLabelClassName: 'text-slate-700',
-    fieldValueClassName: 'text-emerald-800',
-    fieldValueSecondaryClassName: 'text-emerald-700',
-    fieldRowClassName: 'text-slate-700',
-    leftBlockClassName: 'bg-white border-emerald-200',
-    leftBlockTextClassName: 'text-[46px]',
-    qrBorderClassName: 'border-emerald-200',
-    imageFallbackClassName: 'bg-white border-emerald-200 text-slate-400'
+    valueTextClassName: 'text-black',
+    fieldLabelClassName: 'text-black',
+    fieldValueClassName: 'text-black',
+    fieldValueSecondaryClassName: 'text-black',
+    fieldRowClassName: 'text-black',
+    leftBlockClassName: 'bg-[#B3B3B3] text-black border-black',
+    leftBlockTextClassName: 'text-[49px]',
+    qrBorderClassName: 'border-black',
+    imageFallbackClassName: 'bg-white border-black text-black'
   }
 };
 
@@ -118,12 +175,22 @@ const PrintLabelCard = React.forwardRef<HTMLDivElement, {
       {variant === 'tag' ? (
 
         <>
-          <div className="absolute top-1.5 left-2.5 text-left">
-            <span className={`text-[8px] tracking-wider font-extrabold block leading-none uppercase ${config.titleClassName}`}>{config.titleText}</span>
-            <span className={`text-xs sm:text-sm font-black block mt-0.5 tracking-tight leading-none ${config.valueTextClassName}`}>{data.id}</span>
+          <div className="absolute top-1.5 left-2.5 right-1.5 text-left min-w-0">
+            <FitInlineText
+              text={String(config.titleText || '')}
+              maxPx={11}
+              minPx={8}
+              className={`tracking-wider font-extrabold leading-none uppercase ${config.titleClassName}`}
+            />
+            <FitInlineText
+              text={String(data.id || '')}
+              maxPx={15}
+              minPx={10}
+              className={`font-black mt-0.5 tracking-tight leading-none ${config.valueTextClassName}`}
+            />
           </div>
-          <div className="flex h-full w-full items-stretch gap-2.5 pt-6">
-            <div className="flex min-w-0 flex-1 flex-col justify-center pr-2">
+          <div className="flex h-full w-full items-stretch gap-2 pt-6">
+            <div className="flex min-w-0 flex-1 flex-col justify-center pr-1">
               <div className="flex flex-col items-start justify-center gap-2">
                 <div className="flex items-center justify-start self-start">
                   {fallbackImage ? (
@@ -134,31 +201,52 @@ const PrintLabelCard = React.forwardRef<HTMLDivElement, {
                       className={`w-[82px] h-[82px] object-contain rounded border shadow bg-white p-0.5 ${config.qrBorderClassName}`}
                     />
                   ) : (
-                    <div className={`w-[82px] h-[82px] rounded flex flex-col items-center justify-center text-[7px] text-center leading-tight ${config.imageFallbackClassName}`}>
+                    <div className={`w-[82px] h-[82px] rounded flex flex-col items-center justify-center text-[10px] text-center leading-tight ${config.imageFallbackClassName}`}>
                       NO IMAGE
                     </div>
                   )}
                 </div>
-                <div className={`space-y-1.5 text-[8.5px] ${config.fieldRowClassName}`}>
-                  <div className="flex flex-wrap items-center gap-1">
+                <div className={`space-y-1.5 text-[11.5px] ${config.fieldRowClassName}`}>
+                  <div className="flex flex-nowrap items-center gap-1 min-w-0">
                     <span className={`shrink-0 font-bold ${config.titleClassName}`}>SOURCE:</span>
-                    <span className={`font-black ${config.fieldValueClassName}`}>{data.source_requested_id}</span>
+                    <div className="min-w-0 flex-1">
+                      <FitInlineText
+                        text={String(data.source_requested_id || '')}
+                        maxPx={11.5}
+                        minPx={8}
+                        className={`font-black ${config.fieldValueClassName}`}
+                      />
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex flex-nowrap items-center gap-1 min-w-0">
                     <span className={`shrink-0 font-bold ${config.titleClassName}`}>DRIVE S/N:</span>
-                    <span className={`font-black ${config.fieldValueSecondaryClassName}`}>{data.hd_serial || 'PENDING'}</span>
+                    <div className="min-w-0 flex-1">
+                      <FitInlineText
+                        text={String(data.hd_serial || 'PENDING')}
+                        maxPx={11.5}
+                        minPx={7}
+                        className={`font-black ${config.fieldValueSecondaryClassName}`}
+                      />
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex flex-nowrap items-center gap-1 min-w-0">
                     <span className={`shrink-0 font-bold ${config.titleClassName}`}>ACCEPTED:</span>
-                    <span className={`font-black ${config.fieldValueSecondaryClassName}`}>{displayTime}</span>
+                    <div className="min-w-0 flex-1">
+                      <FitInlineText
+                        text={String(displayTime || '')}
+                        maxPx={11.5}
+                        minPx={6.5}
+                        className={`font-black ${config.fieldValueSecondaryClassName}`}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-              <span className={`mt-2 whitespace-nowrap border-t border-slate-200 pt-1.5 text-[7px] font-sans leading-none uppercase font-bold tracking-tight ${config.titleClassName}`}>
+              <span className={`mt-2 whitespace-nowrap border-t border-black pt-1.5 text-[10px] font-sans leading-none uppercase font-bold tracking-tight ${config.titleClassName}`}>
                 {config.footerText}
               </span>
             </div>
-            <div className="flex shrink-0 flex-col items-center justify-center gap-2 self-center pl-1">
+            <div className="flex shrink-0 flex-col items-center justify-center gap-2 self-center pl-0">
               <div className={`flex items-center justify-center bg-white p-1.5 border rounded-lg shrink-0 w-[88px] h-[88px] shadow-sm ${config.qrBorderClassName}`}>
                 <QRCodeSVG value={data.id} size={64} level="M" />
               </div>
@@ -170,22 +258,48 @@ const PrintLabelCard = React.forwardRef<HTMLDivElement, {
         </>
       ) : (
         <>
-          <div className="flex h-full w-full items-stretch justify-between gap-3 text-left flex-1 min-w-0">
-            <div className="flex min-w-0 flex-1 flex-col justify-start pr-2">
-              <div className="flex items-start gap-2">
-                <span className={`text-[18px] tracking-wider font-black block leading-none uppercase ${config.titleClassName}`}>{config.titleText}</span>
+          <div className="flex h-full w-full items-stretch justify-between gap-2 text-left flex-1 min-w-0">
+            <div className="flex min-w-0 flex-1 flex-col justify-start pr-1">
+              <div className="flex items-start gap-2 min-w-0">
+                <div className="min-w-0 w-full">
+                  <FitInlineText
+                    text={String(config.titleText || '')}
+                    maxPx={21}
+                    minPx={11}
+                    className={`tracking-wider font-black leading-none uppercase ${config.titleClassName}`}
+                  />
+                </div>
               </div>
               <div className="flex flex-1 items-center">
                 <div className="w-full">
-                  <span className={`text-xs sm:text-sm font-black block mt-1 tracking-tight break-all leading-tight whitespace-normal ${config.valueTextClassName}`}>{data.id}</span>
-                  <div className="space-y-0.5 my-1 text-[9px] text-slate-700">
-                    <div className="flex items-start gap-1">
-                      <span>SOURCE DATASET:</span>
-                      <span className={`font-extrabold truncate ${config.fieldValueClassName}`}>{data.source_requested_id}</span>
+                  <FitInlineText
+                    text={String(data.id || '')}
+                    maxPx={15}
+                    minPx={9}
+                    className={`font-black mt-1 tracking-tight leading-tight ${config.valueTextClassName}`}
+                  />
+                  <div className="space-y-0.5 my-1 text-[12px] text-black">
+                    <div className="flex flex-nowrap items-start gap-1 min-w-0">
+                      <span className="shrink-0">SOURCE DATASET:</span>
+                      <div className="min-w-0 flex-1">
+                        <FitInlineText
+                          text={String(data.source_requested_id || '')}
+                          maxPx={12}
+                          minPx={8}
+                          className={`font-extrabold ${config.fieldValueClassName}`}
+                        />
+                      </div>
                     </div>
-                    <div className="flex items-start gap-1">
-                      <span>ACCEPTED AT:</span>
-                      <span className={`font-extrabold truncate ${config.fieldValueSecondaryClassName}`}>{displayTime}</span>
+                    <div className="flex flex-nowrap items-start gap-1 min-w-0">
+                      <span className="shrink-0">ACCEPTED AT:</span>
+                      <div className="min-w-0 flex-1">
+                        <FitInlineText
+                          text={String(displayTime || '')}
+                          maxPx={12}
+                          minPx={7}
+                          className={`font-extrabold ${config.fieldValueSecondaryClassName}`}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -195,7 +309,7 @@ const PrintLabelCard = React.forwardRef<HTMLDivElement, {
               <QRCodeSVG value={data.id} size={80} level="M" />
             </div>
           </div>
-          <span className={`absolute bottom-2 left-2 right-2 whitespace-nowrap border-t border-emerald-600/30 pt-1 text-[15px] font-sans leading-none font-black uppercase ${config.titleClassName}`}>
+          <span className={`absolute bottom-2 left-2 right-2 whitespace-nowrap border-t border-black pt-1 text-[14px] text-center text-black font-sans leading-none font-black uppercase ${config.titleClassName}`}>
             {config.footerText}
           </span>
         </>
@@ -2043,6 +2157,46 @@ export default function VolunteerPortal({
     const printTopOffsetMm = printSheetOffsetMm;
     const printOffsetXmm = printSheetOffsetXMm;
 
+    const buildPdfBase64FromImage = async (imageDataUrl: string) => {
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: [62, 100],
+        compress: true,
+      });
+
+      pdf.addImage(imageDataUrl, 'PNG', 0, 0, 62, 100, undefined, 'FAST');
+      const dataUri = pdf.output('datauristring');
+      const commaIndex = dataUri.indexOf(',');
+      if (commaIndex < 0) {
+        throw new Error('Unable to generate PDF payload for direct printing.');
+      }
+      return dataUri.slice(commaIndex + 1);
+    };
+
+    const tryDirectLpPrint = async (jobs: Array<{ job_name: string; pdf_base64: string }>) => {
+      const response = await fetch('/api/print/lp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs })
+      });
+
+      if (!response.ok) {
+        let message = 'Direct print endpoint rejected the print request.';
+        try {
+          const details = await response.json();
+          if (details?.error) {
+            message = String(details.error);
+          }
+        } catch {
+          // Keep generic message when error body is not JSON.
+        }
+        throw new Error(message);
+      }
+
+      return response.json();
+    };
+
     const createPrintWindow = (title: string, imageDataUrl: string, altText: string) => {
       const printWindow = window.open('', title, 'width=420,height=980');
       if (!printWindow) {
@@ -2149,6 +2303,26 @@ export default function VolunteerPortal({
     try {
       const tagBleedPng = await addWhiteBleed(finalTagPng, 5);
       const ticketBleedPng = await addWhiteBleed(finalTicketPng, 5);
+
+      try {
+        const tagPdfBase64 = await buildPdfBase64FromImage(tagBleedPng);
+        const ticketPdfBase64 = await buildPdfBase64FromImage(ticketBleedPng);
+        await tryDirectLpPrint([
+          {
+            job_name: `ddv-tag-${printedTicketDisk.id}`,
+            pdf_base64: tagPdfBase64
+          },
+          {
+            job_name: `ddv-ticket-${printedTicketDisk.id}`,
+            pdf_base64: ticketPdfBase64
+          }
+        ]);
+        alert('Labels were sent directly to the Ubuntu printer queue.');
+        return;
+      } catch (directPrintErr) {
+        console.warn('Direct lp printing unavailable; using browser print fallback.', directPrintErr);
+      }
+
       createPrintWindow('ddv-thermal-print-tag', tagBleedPng, 'Tag');
       createPrintWindow('ddv-thermal-print-ticket', ticketBleedPng, 'Ticket');
     } catch (err) {

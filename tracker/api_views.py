@@ -1,5 +1,10 @@
 import random
 import re
+import base64
+import binascii
+import os
+import subprocess
+import tempfile
 import uuid
 from datetime import datetime
 
@@ -286,6 +291,99 @@ def _apply_status_having(disk, status, source=None):
         havings_type=havings_type,
         datasource=source,
     )
+
+
+def _is_ubuntu_host():
+    if os.name != 'posix':
+        return False
+    try:
+        with open('/etc/os-release', 'r', encoding='utf-8') as handle:
+            content = handle.read().lower()
+        return 'id=ubuntu' in content or 'id_like=ubuntu' in content
+    except Exception:
+        return False
+
+
+def _sanitize_lp_token(value):
+    return re.sub(r'[^a-zA-Z0-9_.:\-]', '', str(value or ''))[:64]
+
+
+def _decode_pdf_payload(pdf_base64):
+    cleaned = str(pdf_base64 or '').strip()
+    if cleaned.startswith('data:application/pdf'):
+        parts = cleaned.split(',', 1)
+        cleaned = parts[1] if len(parts) == 2 else ''
+    if not cleaned:
+        raise ValueError('Missing PDF payload.')
+    try:
+        pdf_bytes = base64.b64decode(cleaned, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError('Invalid PDF payload encoding.')
+    if len(pdf_bytes) < 8 or not pdf_bytes.startswith(b'%PDF'):
+        raise ValueError('Payload is not a valid PDF document.')
+    return pdf_bytes
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+def api_print_lp(request):
+    if not _is_ubuntu_host():
+        return JsonResponse(
+            {'success': False, 'error': 'Direct lp printing is only available on Ubuntu Linux hosts.'},
+            status=400,
+        )
+
+    payload = _json_body(request)
+    jobs = payload.get('jobs') if isinstance(payload.get('jobs'), list) else []
+    if not jobs:
+        return JsonResponse({'success': False, 'error': 'At least one PDF print job is required.'}, status=400)
+    if len(jobs) > 4:
+        return JsonResponse({'success': False, 'error': 'Too many print jobs in a single request.'}, status=400)
+
+    printer = _sanitize_lp_token(payload.get('printer', ''))
+    accepted = []
+
+    for idx, job in enumerate(jobs, start=1):
+        if not isinstance(job, dict):
+            return JsonResponse({'success': False, 'error': 'Print job payload is invalid.'}, status=400)
+
+        try:
+            pdf_bytes = _decode_pdf_payload(job.get('pdf_base64', ''))
+        except ValueError as exc:
+            return JsonResponse({'success': False, 'error': str(exc)}, status=400)
+
+        job_name = _sanitize_lp_token(job.get('job_name') or f'ddv-label-{idx}') or f'ddv-label-{idx}'
+        temp_path = ''
+        try:
+            with tempfile.NamedTemporaryFile(prefix='ddv-print-', suffix='.pdf', delete=False) as tmp:
+                tmp.write(pdf_bytes)
+                temp_path = tmp.name
+
+            command = ['lp']
+            if printer:
+                command.extend(['-d', printer])
+            command.extend(['-t', job_name, temp_path])
+
+            run_result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if run_result.returncode != 0:
+                error_message = (run_result.stderr or run_result.stdout or 'lp failed').strip()
+                return JsonResponse({'success': False, 'error': error_message}, status=500)
+
+            accepted.append({'job_name': job_name, 'lp_response': (run_result.stdout or '').strip()})
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    return JsonResponse({'success': True, 'accepted': accepted})
 
 
 @csrf_exempt

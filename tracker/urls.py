@@ -20,6 +20,7 @@ urlpatterns = [
     path('api/duplicators', api_views.api_duplicators_collection, name='api_duplicators_collection'),
     path('api/duplicators/<str:duplicator_id>', api_views.api_duplicators_item, name='api_duplicators_item'),
     path('api/disks', api_views.api_disks_collection, name='api_disks_collection'),
+    path('api/print/lp', api_views.api_print_lp, name='api_print_lp'),
     path('api/disks/scan-label', api_views.api_disks_scan_label, name='api_disks_scan_label'),
     path('api/disks/<str:disk_id>/status-logs', api_views.api_disk_status_logs, name='api_disk_status_logs'),
     path('api/disks/<str:disk_id>', api_views.api_disks_item, name='api_disks_item'),
