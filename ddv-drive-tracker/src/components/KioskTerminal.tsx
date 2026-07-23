@@ -16,6 +16,7 @@ import { Disk } from '../types';
 
 export default function KioskTerminal() {
   const [searchId, setSearchId] = useState('');
+  const [lastScannedId, setLastScannedId] = useState('');
   const scannerInputRef = useRef<HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -36,6 +37,7 @@ export default function KioskTerminal() {
   const handleResetSearch = () => {
     setSearched(false);
     setSearchId('');
+    setLastScannedId('');
     setErrorMsg('');
     setDiskRecord(null);
     setStatusLogs([]);
@@ -72,7 +74,8 @@ export default function KioskTerminal() {
 
   const handleLookup = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!searchId.trim()) return;
+    const rawScanValue = searchId.trim();
+    if (!rawScanValue) return;
 
     setLoading(true);
     setErrorMsg('');
@@ -80,10 +83,15 @@ export default function KioskTerminal() {
     setDiskRecord(null);
     setStatusLogs([]);
 
-    let cleanId = searchId.trim();
+    let cleanId = rawScanValue;
     if (cleanId.toUpperCase().startsWith('VAL-')) cleanId = cleanId.substring(4);
     if (cleanId.startsWith('*') && cleanId.endsWith('*')) cleanId = cleanId.slice(1, -1);
     if (cleanId.toUpperCase().startsWith('VAL-')) cleanId = cleanId.substring(4);
+
+    const normalizedScanId = cleanId.toUpperCase();
+    setLastScannedId(normalizedScanId);
+    setSearchId('');
+    scannerInputRef.current?.focus();
 
     try {
       const lookupRes = await fetch(`/api/kiosk/lookup-disk/${cleanId}`);
@@ -127,6 +135,8 @@ export default function KioskTerminal() {
             status: 'received'
           });
         }
+
+        setLastScannedId((lookupData.disk_id || cleanId).toUpperCase());
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Asset sequence mismatch inside read-only disk replication.');
@@ -202,6 +212,13 @@ export default function KioskTerminal() {
                 <Search className="h-5 w-5 text-slate-500" />
               </div>
             </div>
+
+            {searched && lastScannedId && (
+              <div className="-mt-1 rounded-xl border border-blue-900/30 bg-blue-950/10 px-4 py-2.5 text-center">
+                <div className="text-[10px] font-mono uppercase tracking-widest text-slate-400">Scan Results For</div>
+                <div className="text-sm md:text-base font-mono font-extrabold tracking-widest text-blue-300 mt-1">{lastScannedId}</div>
+              </div>
+            )}
 
             <div className="rounded-xl border border-[#2A2A2E] bg-[#0E0E10] min-h-[300px] p-4 md:p-6 flex items-center justify-center">
               {!searched && (
